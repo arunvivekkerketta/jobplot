@@ -1,0 +1,200 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String            @id @default(cuid())
+  email         String            @unique
+  passwordHash  String
+  createdAt     DateTime          @default(now())
+  profile       Profile?
+  settings      Settings?
+  answers       AnswerBankEntry[]
+  documents     Document[]
+}
+
+model Profile {
+  id             String          @id @default(cuid())
+  userId         String          @unique
+  user           User            @relation(fields: [userId], references: [id])
+  jsonResume     Json
+  version        Int             @default(1)
+  updatedAt      DateTime        @updatedAt
+  facts          Fact[]
+  matchScores    MatchScore[]
+  resumeVersions ResumeVersion[]
+}
+
+model Fact {
+  id        String    @id @default(cuid())
+  profileId String
+  profile   Profile   @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  fid       String
+  path      String
+  kind      String
+  text      String
+  entities  String[]
+  numbers   String[]
+  startDate DateTime?
+  endDate   DateTime?
+  source    String    @default("USER")
+  verified  Boolean   @default(false)
+
+  @@unique([profileId, fid])
+  @@index([profileId, kind])
+}
+
+model Job {
+  id              String        @id @default(cuid())
+  source          String
+  externalId      String?
+  url             String
+  canonicalUrl    String        @unique
+  company         String
+  title           String
+  location        String?
+  remote          Boolean       @default(false)
+  salaryMin       Int?
+  salaryMax       Int?
+  currency        String?
+  descriptionText String
+  parsed          Json?
+  postedAt        DateTime?
+  contentHash     String
+  embedding       Unsupported("vector(384)")?
+  embeddingModel  String?
+  fetchedAt       DateTime      @default(now())
+  matchScores     MatchScore[]
+  applications    Application[]
+
+  @@unique([source, externalId])
+  @@index([contentHash])
+}
+
+model MatchScore {
+  id          String   @id @default(cuid())
+  jobId       String
+  job         Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  profileId   String
+  profile     Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  score       Float
+  breakdown   Json
+  explanation String
+  algoVersion Int      @default(1)
+  createdAt   DateTime @default(now())
+
+  @@index([profileId, score])
+}
+
+model ResumeVersion {
+  id               String          @id @default(cuid())
+  profileId        String
+  profile          Profile         @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  jobId            String?
+  tailoredJson     Json
+  pdfPath          String?
+  docxPath         String?
+  validationReport Json
+  keywordReport    Json
+  approvedAt       DateTime?
+  applications     Application[]
+}
+
+model Application {
+  id              String             @id @default(cuid())
+  jobId           String             @unique
+  job             Job                @relation(fields: [jobId], references: [id])
+  resumeVersionId String?
+  resumeVersion   ResumeVersion?     @relation(fields: [resumeVersionId], references: [id])
+  portal          String
+  status          String             @default("QUEUED")
+  mode            String             @default("COPILOT")
+  answers         Json?
+  jdSnapshot      String?
+  screenshots     String[]
+  submittedAt     DateTime?
+  outcomeAt       DateTime?
+  notes           String?
+  events          ApplicationEvent[]
+}
+
+model ApplicationEvent {
+  id            String      @id @default(cuid())
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  type          String
+  payload       Json
+  at            DateTime    @default(now())
+}
+
+model AnswerBankEntry {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  key             String
+  questionPattern String?
+  answer          String
+  sensitive       Boolean  @default(false)
+  source          String   @default("USER")
+
+  @@unique([userId, key])
+}
+
+model GapReport {
+  id           String        @id @default(cuid())
+  userId       String
+  inputJobIds  String[]
+  gaps         Json
+  createdAt    DateTime      @default(now())
+  projectPlans ProjectPlan[]
+}
+
+model ProjectPlan {
+  id              String    @id @default(cuid())
+  gapReportId     String
+  gapReport       GapReport @relation(fields: [gapReportId], references: [id], onDelete: Cascade)
+  blueprint       Json
+  status          String    @default("SUGGESTED")
+  repoUrl         String?
+  measuredMetrics Json?
+}
+
+model Document {
+  id               String   @id @default(cuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  jobId            String?
+  type             String
+  content          String
+  format           String   @default("markdown")
+  metadata         Json?
+  validationReport Json?
+  createdAt        DateTime @default(now())
+}
+
+model Settings {
+  userId         String  @id
+  user           User    @relation(fields: [userId], references: [id])
+  mode           String  @default("COPILOT")
+  dailyCap       Int     @default(10)
+  matchThreshold Int     @default(75)
+  killSwitch     Boolean @default(false)
+  allowSubmit    Boolean @default(false)
+  perPortalMode  Json    @default("{}")
+  quietHours     Json    @default("{}")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  at         DateTime @default(now())
+  actor      String
+  action     String
+  entityType String
+  entityId   String?
+  payload    Json
+}
