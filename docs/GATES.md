@@ -285,3 +285,105 @@ a local PostgreSQL 17.11 + pgvector cluster on port 55432 instead of the
 `docker compose` service (Docker is not installed here), and the Next dev server
 needs `serverExternalPackages` plus a webpack external for the native Argon2
 binding and a `.js`→`.ts` extension alias for the transpiled workspace packages.
+
+## Phase 2 — Document rendering and the Documents UI
+
+| Gate # | Sub-Task Name | Observable Outcome | Expected Proof | Status |
+|---|---|---|---|---|
+| 2.1 | HTML render | A standalone single-column HTML resume with no tables, images or external assets; profile text is escaped | vitest render tests assert the doctype, sections, absence of `<table>`/`<img>`/`<script src>`, and escaped XSS payloads | [MET] |
+| 2.2 | PDF render | Real text-based PDF starting with `%PDF-` | vitest asserts the magic bytes and a >1500-byte buffer | [MET] |
+| 2.3 | DOCX render | Real OOXML zip starting with `PK`, not HTML renamed | vitest asserts the zip magic bytes and a >1500-byte buffer | [MET] |
+| 2.4 | ATS lint | Deterministic lint that never calls an LLM: missing name/email/skills, oversized bullets, keyword coverage against a job description | vitest ats suite reports the expected issue ids and a coverage gap for COBOL | [MET] |
+| 2.5 | Claim guardrail (I1) | A document that invents an employer, title, date or number-bearing bullet is rejected before any artifact exists | vitest rejects with `ClaimValidationError` and reports `UNKNOWN_EMPLOYER`; 20+ claims checked | [MET] |
+| 2.6 | Watermark (I6) | A `MOCK_OFFER` document always carries the SAMPLE watermark, with no caller opt-out | vitest asserts `watermark === "SAMPLE"` and that the bytes contain it | [MET] |
+| 2.7 | Auth wall on documents | Unauthenticated `/documents` and `/api/documents` never reach the handler | Playwright asserts 307 to `/login` for both the page and the POST | [MET] |
+| 2.8 | Documents UI and persistence | Generating from the UI validates every claim, persists the Document row, shows the ATS score and preview, and writes its audit row | Playwright asserts the validated-claim count, ATS score, preview iframe, the row in the documents table and `document.render` on `/audit` | [MET] |
+| 2.9 | Binary downloads | PDF and DOCX downloads come back as real binaries with the right content type | Playwright POSTs both formats and asserts `%PDF-`/`PK` magic bytes and length from the download route | [MET] |
+
+## Evidence Blocks — Phase 2
+
+### Gates 2.1–2.6 — Renderer and guardrails [MET]
+
+`pnpm test` (exit 0):
+
+```
+@jobpilot/render:test:  ✓ test/ats.test.ts (4 tests) 7ms
+@jobpilot/render:test:  ✓ test/render.test.ts (9 tests) 76ms
+@jobpilot/render:test:  Test Files  2 passed (2)
+@jobpilot/render:test:       Tests  13 passed (13)
+ Tasks:    6 successful, 6 total
+```
+
+Walkthrough: `renderResume` builds a `ResumeDocument` by verbatim projection of
+the profile, runs `validateResumeDocument` before rendering, and throws
+`ClaimValidationError` when a fact is not in the Fact Index — so the PDF/DOCX
+paths in gate 2.5 fail before a buffer exists. The HTML renderer escapes with
+`escapeHtml` and emits no tables, images or external assets; the PDF is emitted
+by pdfkit with the watermark drawn on every page, DOCX by `docx` as real OOXML.
+13 render tests plus 16 core tests cover gates 2.1–2.6.
+
+### Gates 2.7–2.9 — Documents wall, UI, persistence and downloads [MET]
+
+`pnpm e2e` (exit 0):
+
+```
+  ok  7 tests\e2e\phase2.spec.ts:30:5 › gate 2.7: unauthenticated /documents redirects to /login (307) (31ms)
+  ok  8 tests\e2e\phase2.spec.ts:39:5 › gate 2.7b: the render API rejects anonymous callers (401) (14ms)
+  ok  9 tests\e2e\phase2.spec.ts:54:5 › gate 2.8: generating from the UI validates every claim, persists the document and audits it (19.3s)
+  ok 10 tests\e2e\phase2.spec.ts:83:5 › gate 2.9: PDF and DOCX downloads are real binaries (4.5s)
+  10 passed (1.1m)
+```
+
+Persisted rows after the run:
+
+```
+ format | documents | avg_ats
+--------+-----------+---------
+ docx   |         3 |   100.0
+ html   |         2 |   100.0
+ pdf    |         3 |   100.0
+
+         action          | count
+-------------------------+-------
+ document.render         |     8
+ profile.import.rejected |     3
+ profile.save            |     11
+```
+
+Walkthrough: `/api/documents` resolves the session, renders, then writes the
+`Document` row and the `document.render` audit row in one transaction, so a
+document cannot exist without its audit entry (I8). The download route scopes
+`findFirst({ id, userId })` (I7), sends `Cache-Control: private, no-store`, and
+adds a `sandbox` CSP to inline HTML. Each of the 8 renders above has exactly one
+matching audit row.
+
+### Verification for the phase
+
+```
+TYPECHECK_EXIT=0   Tasks: 9 successful, 9 total
+LINT_EXIT=0        eslint . (0 errors, 0 warnings)
+TEST_EXIT=0        13 render + 16 core + 21 llm + 2 db = 52 tests
+E2E_EXIT=0         10 passed (1.1m)
+build_exit=0       ✓ Compiled successfully; ƒ /documents, ƒ /api/documents
+```
+
+Two real defects were found and fixed while proving this phase rather than worked
+around. First, concurrent profile writes failed with Prisma's "Unable to start a
+transaction in the given time": interactive transactions hold a pooled connection
+and the 2s `maxWait` default expired while two requests queued on the same
+profile row, so `saveProfileWithFacts` and `saveRenderedDocument` now pass
+`{ maxWait: 15_000, timeout: 30_000 }`. Second, the e2e suite already ran its
+specs in parallel against the single seeded admin, so specs contended for that
+row; `playwright.config.ts` now pins `workers: 1` with the reason recorded there.
+
+## Phase 2 status
+
+All nine Phase 2 gates are [MET] with the evidence above. `pnpm typecheck`,
+`pnpm lint`, `pnpm test` (52 tests) and `pnpm e2e` (10 Playwright tests) exit 0,
+and `pnpm build` compiles the app with the new `/documents` route.
+
+One environment deviation carries over from Phase 1: the database is a local
+PostgreSQL 17.11 + pgvector cluster on port 55432 (Docker is not installed on
+this machine). The cluster in this checkout was created with `initdb` from the
+existing portable pgvector install, then migrated and seeded with
+`pnpm db:migrate && pnpm db:seed`.

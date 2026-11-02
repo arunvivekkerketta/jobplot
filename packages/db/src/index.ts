@@ -1,10 +1,18 @@
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import { redactDeep } from "@jobpilot/llm";
 import { buildFactIndex, type JsonResumeProfile } from "@jobpilot/core";
 
 export { hash as hashPassword, verify as verifyPassword } from "@node-rs/argon2";
 
 export const prisma = new PrismaClient();
+
+/**
+ * Interactive transactions hold a pooled connection until they commit. Prisma's
+ * default maxWait of 2s surfaces as "Unable to start a transaction in the given
+ * time" when concurrent requests write the same profile row (two imports, or an
+ * import racing a render), so the write paths give the pool room to queue.
+ */
+const TX_OPTIONS = { maxWait: 15_000, timeout: 30_000 } as const;
 
 export interface AuditInput {
   actor: "SYSTEM" | "USER" | "LLM" | "BROWSER";
@@ -31,6 +39,46 @@ function toDate(date?: string): Date | null {
   if (!date) return null;
   const d = new Date(`${date.slice(0, 7)}-01T00:00:00.000Z`);
   return Number.isNaN(d.getTime()) ? null : d;
+}
+
+export interface RenderedDocumentInput {
+  userId: string;
+  format: string;
+  contentBase64: string;
+  validationReport: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  auditPayload: Record<string, unknown>;
+}
+
+/**
+ * Stores a rendered document and its audit row in one transaction (I8), so a
+ * document can never exist without the record of who generated it.
+ */
+export async function saveRenderedDocument(
+  input: RenderedDocumentInput,
+): Promise<{ id: string; createdAt: Date }> {
+  return prisma.$transaction(async (tx) => {
+    const saved = await tx.document.create({
+      data: {
+        userId: input.userId,
+        type: "RESUME",
+        format: input.format,
+        content: input.contentBase64,
+        validationReport: input.validationReport as Prisma.InputJsonValue,
+        metadata: input.metadata as Prisma.InputJsonValue,
+      },
+    });
+    await tx.auditLog.create({
+      data: {
+        actor: "USER",
+        action: "document.render",
+        entityType: "Document",
+        entityId: saved.id,
+        payload: redactDeep(input.auditPayload) as Prisma.InputJsonValue,
+      },
+    });
+    return { id: saved.id, createdAt: saved.createdAt };
+  }, TX_OPTIONS);
 }
 
 export interface SaveProfileResult {
@@ -81,7 +129,7 @@ export async function saveProfileWithFacts(
     });
 
     return { profileId: saved.id, version, factCount: factRows.length };
-  });
+  }, TX_OPTIONS);
   return result;
 }
 

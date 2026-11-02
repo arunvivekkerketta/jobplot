@@ -20,6 +20,11 @@ export default defineConfig({
   testDir: "./tests/e2e",
   timeout: 60_000,
   retries: 0,
+  // Every spec signs in as the one seeded admin and rewrites that user's
+  // profile row, so parallel workers contend for the same row lock and the
+  // same Fact rebuild. Serial execution makes each gate's proof deterministic.
+  workers: 1,
+  fullyParallel: false,
   use: {
     baseURL: "http://localhost:3000",
     trace: "retain-on-failure",

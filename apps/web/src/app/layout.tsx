@@ -21,6 +21,9 @@ export default function RootLayout({
               </Link>
               <nav className="flex items-center gap-5 text-sm">
                 <Link href="/profile" className="hover:text-blue-700">Profile</Link>
+                <Link href="/documents" className="hover:text-blue-700">
+                  Documents
+                </Link>
                 <Link href="/audit" className="hover:text-blue-700">Audit</Link>
                 <Link href="/settings" className="hover:text-blue-700">Settings</Link>
               </nav>

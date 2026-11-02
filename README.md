@@ -2,9 +2,11 @@
 
 Job-application copilot with a deterministic Fact Index and a watermark-guarded
 apply pipeline. This repository currently contains **Phase 1 — foundation and
-master profile**: authentication, profile import, the Fact Index, settings and
-the audit trail. Later phases add job sources, matching, tailoring, rendering and
-the apply worker; the rules every phase must follow live in `CLAUDE.md`.
+master profile** (authentication, profile import, the Fact Index, settings and
+the audit trail) and **Phase 2 — document rendering** (HTML, PDF and DOCX resumes
+that are claim-validated against the Fact Index, ATS lint, and the Documents
+UI/API). Later phases add job sources, matching, tailoring and the apply worker;
+the rules every phase must follow live in `CLAUDE.md`.
 
 ## Requirements
 
@@ -67,7 +69,7 @@ apps/mock-ats   Local mock applicant-tracking system used by apply tests
 packages/core   Pure domain logic: crypto, profile schema, Fact Index, aliases
 packages/db     Prisma schema, migrations, seed, audit + profile persistence
 packages/llm    Anthropic client with retry/repair/timeout, redaction, wrappers
-packages/render Phase-4 resume rendering boundary
+packages/render HTML, PDF and DOCX resume rendering plus ATS lint
 packages/sources Phase-3 job-source adapters boundary
 packages/apply  Phase-4 application executor boundary
 fixtures/       Sample JSON Resume used by tests
@@ -86,5 +88,5 @@ enforced in code, not just documented — see `CLAUDE.md` for the full protocol.
 
 ## Phase status
 
-All 15 Phase 1 gates are met; the exact commands and outputs are recorded in
-[`docs/GATES.md`](docs/GATES.md).
+All 15 Phase 1 gates and all 9 Phase 2 gates are met; the exact commands and
+outputs are recorded in [`docs/GATES.md`](docs/GATES.md).

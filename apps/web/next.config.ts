@@ -16,9 +16,14 @@ if (!process.env.AUTH_SECRET && process.env.NEXTAUTH_SECRET) {
 }
 
 const nextConfig: NextConfig = {
-  transpilePackages: ["@jobpilot/core", "@jobpilot/db", "@jobpilot/llm"],
+  transpilePackages: [
+    "@jobpilot/core",
+    "@jobpilot/db",
+    "@jobpilot/llm",
+    "@jobpilot/render",
+  ],
   // Argon2 ships a prebuilt .node binary; webpack cannot parse it.
-  serverExternalPackages: ["@node-rs/argon2"],
+  serverExternalPackages: ["@node-rs/argon2", "pdfkit", "docx"],
   webpack: (config) => {
     // serverExternalPackages alone does not cover imports that flow through
     // the transpiled @jobpilot/db package, so mark the binary external here.
