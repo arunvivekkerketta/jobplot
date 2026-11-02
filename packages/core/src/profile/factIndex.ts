@@ -77,8 +77,11 @@ export function normalizeNumberToken(tok: string): string {
   if (suffix === "%" || suffix === "percent") return `${numPart}%`;
   if (suffix === "x") return `${numPart}x`;
   if (suffix) {
-    const value = Number(numPart) * suffixMap[suffix];
-    if (!Number.isNaN(value)) return String(value);
+    const factor = suffixMap[suffix];
+    if (factor !== undefined) {
+      const value = Number(numPart) * factor;
+      if (!Number.isNaN(value)) return String(value);
+    }
   }
   return String(Number(numPart));
 }
@@ -174,7 +177,15 @@ export function buildFactIndex(
     pushFact(p.fid, `projects[${p.name}]`, "ROLE", p.name, p.startDate, p.endDate);
     entities.add(canonicalize(p.name));
     if (p.description) {
-      pushFact(p.fid, `projects[${p.name}].description`, "SUMMARY", p.description, p.startDate, p.endDate);
+      // The project itself owns p.fid, so the description needs its own id.
+      pushFact(
+        `fid_pdesc_${p.fid.replace(/^fid_/, "")}`,
+        `projects[${p.name}].description`,
+        "SUMMARY",
+        p.description,
+        p.startDate,
+        p.endDate,
+      );
     }
     for (const h of p.highlights) {
       pushFact(h.fid, `projects[${p.name}].highlights`, "PROJECT_BULLET", h.text, p.startDate, p.endDate);

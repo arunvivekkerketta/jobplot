@@ -4,7 +4,7 @@ import path from "node:path";
 
 const fixturePath = path.resolve(
   __dirname,
-  "../../../fixtures/sample-resume.json",
+  "../../../../fixtures/sample-resume.json",
 );
 
 async function login(page: import("@playwright/test").Page) {
@@ -20,7 +20,9 @@ test("gate 1.4: unauthenticated /profile redirects to /login (307)", async ({
 }) => {
   const res = await request.get("/profile", { maxRedirects: 0 });
   expect(res.status()).toBe(307);
-  expect(res.headers()["location"]).toBe("http://localhost:3000/login");
+  // Next 15 may serialize a same-origin redirect as a relative Location.
+  const location = res.headers()["location"] ?? "";
+  expect(new URL(location, "http://localhost:3000").pathname).toBe("/login");
 });
 
 test("gate 1.4b: unauthenticated page navigation lands on /login", async ({

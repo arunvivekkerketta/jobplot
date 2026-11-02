@@ -12,3 +12,12 @@ apps/web/.env
 apps/worker/.env
 *.tsbuildinfo
 .DS_Store
+.pgdata/
+.pg-install/
+.tmp/
+
+# Next.js generated type shim
+next-env.d.ts
+
+# Cloud-imported conversation attachments
+.cloud-attachments/

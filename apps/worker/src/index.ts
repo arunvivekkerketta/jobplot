@@ -1,4 +1,15 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import PgBoss from "pg-boss";
+
+// The workspace keeps one .env at the repo root; turbo runs this app from apps/worker.
+try {
+  process.loadEnvFile(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../.env"),
+  );
+} catch {
+  // No root .env: DATABASE_URL must come from the process environment.
+}
 
 /**
  * Worker entrypoint. Phase 1 proves the pg-boss stack boots against Postgres;

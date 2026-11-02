@@ -14,7 +14,8 @@
     "db:seed": "tsx src/seed.ts",
     "db:studio": "prisma studio",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
     "@jobpilot/core": "workspace:*",
@@ -29,8 +30,5 @@
     "tsx": "^4.20.3",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
-  },
-  "prisma": {
-    "seed": "tsx src/seed.ts"
   }
 }

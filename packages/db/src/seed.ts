@@ -1,5 +1,16 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { PrismaClient } from "@prisma/client";
 import { hashPassword } from "./index.js";
+
+// The workspace keeps one .env at the repo root; tsx runs this file from packages/db.
+try {
+  process.loadEnvFile(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../.env"),
+  );
+} catch {
+  // No root .env: ADMIN_EMAIL, ADMIN_PASSWORD and DATABASE_URL must be exported.
+}
 
 const prisma = new PrismaClient();
 

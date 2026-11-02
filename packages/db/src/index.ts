@@ -1,6 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { redactDeep } from "@jobpilot/llm";
-import type { JsonResumeProfile } from "@jobpilot/core";
+import { buildFactIndex, type JsonResumeProfile } from "@jobpilot/core";
 
 export { hash as hashPassword, verify as verifyPassword } from "@node-rs/argon2";
 
@@ -96,59 +96,16 @@ interface FactRow {
   endDate: Date | null;
 }
 
-/** Builds Fact table rows from a fid-complete profile (mirrors FactIndex kinds). */
+/** Builds Fact table rows from the canonical Fact Index so counts never drift. */
 export function buildFactRows(profile: JsonResumeProfile): FactRow[] {
-  const rows: FactRow[] = [];
-  const push = (
-    fid: string,
-    path: string,
-    kind: string,
-    text: string,
-    startDate?: string,
-    endDate?: string,
-  ) => {
-    rows.push({
-      fid,
-      path,
-      kind,
-      text,
-      entities: [],
-      numbers: [],
-      startDate: toDate(startDate),
-      endDate: toDate(endDate),
-    });
-  };
-
-  for (const w of profile.work) {
-    push(w.fid, `work[${w.company}]`, "ROLE", `${w.position} at ${w.company}`, w.startDate, w.endDate);
-    for (const h of w.highlights) {
-      push(h.fid, `work[${w.company}].highlights`, "EXPERIENCE_BULLET", h.text, w.startDate, w.endDate);
-    }
-  }
-  for (const e of profile.education) {
-    const text = [e.studyType, e.area].filter(Boolean).join(" ") || e.institution;
-    push(e.fid, `education[${e.institution}]`, "EDUCATION", `${text} — ${e.institution}`, e.startDate, e.endDate);
-  }
-  for (const s of profile.skills) {
-    push(s.fid, `skills[${s.name}]`, "SKILL", s.name);
-    for (const k of s.keywords) {
-      push(k.fid, `skills[${s.name}].keywords`, "SKILL", k.keyword);
-    }
-  }
-  for (const p of profile.projects) {
-    push(p.fid, `projects[${p.name}]`, "ROLE", p.name, p.startDate, p.endDate);
-    for (const h of p.highlights) {
-      push(h.fid, `projects[${p.name}].highlights`, "PROJECT_BULLET", h.text, p.startDate, p.endDate);
-    }
-    for (const k of p.keywords) {
-      push(k.fid, `projects[${p.name}].keywords`, "SKILL", k.keyword);
-    }
-  }
-  for (const c of profile.certificates) {
-    push(c.fid, `certificates[${c.name}]`, "CERT", `${c.name} (${c.issuer ?? "issuer unknown"})`, c.date);
-  }
-  if (profile.basics.summary) {
-    push(`fid_summary_${profile.basics.name.length}`, "basics.summary", "SUMMARY", profile.basics.summary);
-  }
-  return rows;
+  return buildFactIndex(profile).facts.map((f) => ({
+    fid: f.fid,
+    path: f.path,
+    kind: f.kind,
+    text: f.text,
+    entities: f.entities,
+    numbers: f.numbers,
+    startDate: toDate(f.startDate),
+    endDate: toDate(f.endDate),
+  }));
 }

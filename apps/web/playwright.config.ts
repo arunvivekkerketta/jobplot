@@ -32,10 +32,18 @@ export default defineConfig({
     env: {
       ...env,
       DATABASE_URL:
-        env.DATABASE_URL ?? "postgresql://jobpilot:jobpilot@localhost:5432/jobpilot",
+        process.env.DATABASE_URL ??
+        env.DATABASE_URL ??
+        "postgresql://jobpilot:jobpilot@localhost:5432/jobpilot",
       NEXTAUTH_URL: "http://localhost:3000",
-      AUTH_SECRET: env.NEXTAUTH_SECRET ?? "e2e-secret-not-for-production",
-      NEXTAUTH_SECRET: env.NEXTAUTH_SECRET ?? "e2e-secret-not-for-production",
+      AUTH_SECRET:
+        process.env.AUTH_SECRET ??
+        env.NEXTAUTH_SECRET ??
+        "e2e-secret-not-for-production",
+      NEXTAUTH_SECRET:
+        process.env.NEXTAUTH_SECRET ??
+        env.NEXTAUTH_SECRET ??
+        "e2e-secret-not-for-production",
       APP_ENCRYPTION_KEY:
         env.APP_ENCRYPTION_KEY ?? Buffer.alloc(32, 7).toString("base64"),
     },
