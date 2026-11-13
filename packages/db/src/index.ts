@@ -252,3 +252,125 @@ export function buildFactRows(profile: JsonResumeProfile): FactRow[] {
     endDate: toDate(f.endDate),
   }));
 }
+
+/** One browser action the executor performed; audited individually (I8). */
+export interface ApplicationAction {
+  kind: string;
+  detail: string;
+  field?: string;
+}
+
+/**
+ * Queues an application for a job. `Application.jobId` is unique, so a second
+ * call returns the existing row instead of creating a duplicate (gate 4.6).
+ */
+export async function createApplication(input: {
+  jobId: string;
+  portal: string;
+}): Promise<{ id: string; status: string }> {
+  return prisma.$transaction(async (tx) => {
+    const existing = await tx.application.findUnique({
+      where: { jobId: input.jobId },
+      select: { id: true, status: true },
+    });
+    if (existing) return existing;
+
+    const created = await tx.application.create({
+      data: {
+        jobId: input.jobId,
+        portal: input.portal,
+        status: "QUEUED",
+        mode: "COPILOT",
+        events: { create: { type: "CREATED", payload: { portal: input.portal } } },
+      },
+      select: { id: true, status: true },
+    });
+
+    await tx.auditLog.create({
+      data: {
+        actor: "USER",
+        action: "application.create",
+        entityType: "Application",
+        entityId: created.id,
+        payload: redactDeep({ jobId: input.jobId, portal: input.portal }) as object,
+      },
+    });
+
+    return created;
+  }, TX_OPTIONS);
+}
+
+export interface RecordResultInput {
+  applicationId: string;
+  status: string;
+  actions: ApplicationAction[];
+  reason?: string;
+  submissionText?: string;
+}
+
+/**
+ * Stores the outcome of one executor run: the status, one ApplicationEvent per
+ * browser action and its own AuditLog row, plus a summary audit row, all in one
+ * transaction (gate 4.9).
+ */
+export async function recordApplicationResult(
+  input: RecordResultInput,
+): Promise<{ id: string; status: string; events: number }> {
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.application.update({
+      where: { id: input.applicationId },
+      data: {
+        status: input.status,
+        ...(input.status === "SUBMITTED" ? { submittedAt: new Date() } : {}),
+        ...(input.reason ? { notes: input.reason } : {}),
+        ...(input.submissionText
+          ? { answers: { confirmation: input.submissionText } as Prisma.InputJsonValue }
+          : {}),
+        events: {
+          create: [
+            {
+              type: "STATUS",
+              payload: { status: input.status, reason: input.reason ?? null },
+            },
+            ...input.actions.map((action) => ({
+              type: action.kind,
+              payload: { detail: action.detail, field: action.field ?? null },
+            })),
+          ],
+        },
+      },
+      select: { id: true, status: true, _count: { select: { events: true } } },
+    });
+
+    if (input.actions.length > 0) {
+      await tx.auditLog.createMany({
+        data: input.actions.map((action) => ({
+          actor: "BROWSER" as const,
+          action: `browser.${action.kind.toLowerCase()}`,
+          entityType: "Application",
+          entityId: input.applicationId,
+          payload: redactDeep({
+            detail: action.detail,
+            field: action.field ?? null,
+          }) as Prisma.InputJsonValue,
+        })),
+      });
+    }
+
+    await tx.auditLog.create({
+      data: {
+        actor: "BROWSER",
+        action: "application.result",
+        entityType: "Application",
+        entityId: input.applicationId,
+        payload: redactDeep({
+          status: input.status,
+          reason: input.reason ?? null,
+          actions: input.actions.length,
+        }) as object,
+      },
+    });
+
+    return { id: updated.id, status: updated.status, events: updated._count.events };
+  }, TX_OPTIONS);
+}

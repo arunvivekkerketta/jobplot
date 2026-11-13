@@ -50,6 +50,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@jobpilot/apply':
+        specifier: workspace:*
+        version: link:../../packages/apply
       '@jobpilot/core':
         specifier: workspace:*
         version: link:../../packages/core

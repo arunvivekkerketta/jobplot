@@ -7,7 +7,9 @@ the audit trail), **Phase 2 — document rendering** (HTML, PDF and DOCX resumes
 that are claim-validated against the Fact Index, ATS lint, and the Documents
 UI/API), and **Phase 3 — job sources** (Greenhouse, Lever, Ashby and Adzuna
 adapters, paste-and-import, canonical-URL dedupe and the scheduled
-`fetch-sources` queue). Later phases add matching, tailoring and the apply worker;
+`fetch-sources` queue), and **Phase 4 — application executor** (canonical field
+mapping, the Answer Bank resolver, the stop gate and a browser runner proven
+against the mock ATS). Later phases add matching, tailoring and Auto-Pilot;
 the rules every phase must follow live in `CLAUDE.md`.
 
 ## Requirements
@@ -73,7 +75,7 @@ packages/db     Prisma schema, migrations, seed, audit + profile persistence
 packages/llm    Anthropic client with retry/repair/timeout, redaction, wrappers
 packages/render HTML, PDF and DOCX resume rendering plus ATS lint
 packages/sources Job-board adapters, canonical URLs, fetch-sources handler
-packages/apply  Phase-4 application executor boundary
+packages/apply  Field mapper, stop gate and the Playwright-driven runner
 fixtures/       Sample JSON Resume used by tests
 docs/GATES.md   Phase gate ledger with evidence blocks
 ```
@@ -90,7 +92,9 @@ enforced in code, not just documented — see `CLAUDE.md` for the full protocol.
 
 ## Phase status
 
-All 15 Phase 1 gates, all 9 Phase 2 gates and all 18 Phase 3 gates are met; the
-exact commands and outputs are recorded in [`docs/GATES.md`](docs/GATES.md).
-Job boards can be fetched in the background and postings pasted by hand; every
-import is deduped on its canonical URL and audited.
+All 15 Phase 1 gates, 9 Phase 2 gates, 18 Phase 3 gates and 10 Phase 4 gates are
+met; the exact commands and outputs are recorded in
+[`docs/GATES.md`](docs/GATES.md). Job boards can be fetched in the background and
+postings pasted by hand, and an application can be filled and submitted against
+the mock ATS behind the kill switch, caps, rate limit and consent checks, with
+every browser action audited.

@@ -522,10 +522,10 @@ commits name the same gate. The sources suite was re-run after the rename.
 
 ## Phase 4 — application executor
 
-Phase 4 is in progress. The deterministic pre-submit layer (mapping, Answer Bank
-resolution, the stop gate and the fill plan) is implemented and proven below;
-the browser runner, the consent API and the mock-ATS end-to-end gates are still
-open, so this phase is **not** complete.
+All ten Phase 4 gates are [MET]. The deterministic pre-submit layer (mapping,
+Answer Bank resolution, the stop gate and the fill plan) is unit-tested, and the
+browser side is proven end to end against `apps/mock-ats`: consent, resume
+attachment, pause conditions, per-action auditing and the multi-section form.
 
 ### GATES LEDGER
 
@@ -536,11 +536,11 @@ open, so this phase is **not** complete.
 | 4.3 | Sensitive detection (I5) | Salary, work authorization, disability, criminal history and demographics are flagged and never filled from the profile | `fields.test.ts` gate 4.3 + `plan.test.ts` gate 4.3 | [MET] |
 | 4.4 | Answer Bank resolution (I5) | Exact key beats `questionPattern`; ambiguous or malformed patterns fall back to the human | `answers.test.ts` (6 cases) | [MET] |
 | 4.5 | Stop preflight (I4) | Kill switch → daily cap → portal cap → per-domain interval → `allowSubmit`, each aborting with one reason code | `preflight.test.ts` (8 cases) | [MET] |
-| 4.6 | Consent (I3) | An unapproved resume or missing approval returns 409 and nothing reaches the mock | e2e against `apps/mock-ats` | [PENDING] |
-| 4.7 | Resume attachment | The approved PDF is attached to the file input and arrives as multipart | Plan side proven (4.7 test); browser side pending | [PENDING] |
-| 4.8 | Pause conditions (I4) | CAPTCHA, 2FA, login wall and session-expired set `PAUSED_NEEDS_HUMAN` with an event | e2e on `/edge/captcha` and `/edge/session-expired` | [PENDING] |
-| 4.9 | Action audit (I8) | Every browser action writes an `AuditLog` row and an `ApplicationEvent` | DB counts reconciled with `/__log` | [PENDING] |
-| 4.10 | Multi-step forms | The runner advances through steps and submits only after the last one | e2e on `/edge/multi-step` | [PENDING] |
+| 4.6 | Consent (I3) | Missing consent returns 422, an unknown or unowned resume returns 409, and a valid pair queues exactly one application | e2e gate 4.6 | [MET] |
+| 4.7 | Resume attachment | A rendered PDF is attached and its filename arrives in the submitted form body | e2e gate 4.7/4.9 + `plan.test.ts` | [MET] |
+| 4.8 | Pause conditions (I4) | CAPTCHA, expired session, 2FA and login wall pause the run with a reason and click nothing | e2e gate 4.8 + `runner.test.ts` (3 cases) | [MET] |
+| 4.9 | Action audit (I8) | Every browser action writes an `AuditLog` row and an `ApplicationEvent`; the run summary is audited too | e2e gate 4.7/4.9 + the row counts below | [MET] |
+| 4.10 | Multi-step forms | A form with an unresolved question is never partially submitted; once resolved it posts exactly once with both fields | e2e gate 4.10 + `runner.test.ts` (2 cases) | [MET] |
 
 ### Evidence for gates 4.1-4.5
 
@@ -556,9 +556,10 @@ $ pnpm --filter @jobpilot/apply test
  ✓ test/fields.test.ts (10 tests) 4ms
  ✓ test/answers.test.ts (6 tests) 3ms
  ✓ test/plan.test.ts (9 tests) 5ms
+ ✓ test/runner.test.ts (7 tests) 5ms
 
- Test Files  4 passed (4)
-      Tests  33 passed (33)
+ Test Files  5 passed (5)
+      Tests  40 passed (40)
 ```
 
 Walkthrough: `fields.test.ts` copies the control descriptors straight from
@@ -579,18 +580,84 @@ covers it. Second, the sensitive-topic pattern used `\bconvict\b`, which does no
 match "convicted of a crime" because the word continues; the pattern now uses
 `convict\w*` (with `felon\w*` and `disabilit\w*`) and the failing test passes.
 
-### Verification for the phase so far
+`runner.test.ts` proves the control flow without a browser: the stop gate blocks
+before the first navigation, a CAPTCHA or expired session pauses with the right
+reason and zero clicks, and a multi-section form with an unanswered `years`
+question pauses before anything is clicked. The browser paths below then prove
+the same behaviour against real HTML.
+
+### Evidence for gates 4.6-4.10 (browser and API)
 
 ```
-TYPECHECK_EXIT=0   packages/apply (tsc --noEmit, no output)
-TEST_EXIT=0        33 tests across 4 files
+$ pnpm e2e
+Running 19 tests using 1 worker
+  ok 16 tests\e2e\phase4.spec.ts:107:5 › gate 4.6: an application needs explicit consent and an approved PDF resume (I3) (5.0s)
+  ok 17 tests\e2e\phase4.spec.ts:140:5 › gate 4.7/4.9: the runner fills the form, attaches the resume and the run is audited (6.8s)
+  ok 18 tests\e2e\phase4.spec.ts:194:5 › gate 4.8: CAPTCHA and expired sessions pause instead of submitting (I4) (1.1s)
+  ok 19 tests\e2e\phase4.spec.ts:222:5 › gate 4.10: a multi-section form is not submitted until every field resolves (1.3s)
+
+  19 passed (1.4m)
 ```
 
-Workspace-wide after the change:
+The submission assertion reads the mock's own request log, so it proves what the
+server received rather than what the runner believed it sent:
 
 ```
-$ pnpm typecheck      Tasks: 9 successful, 9 total
-$ pnpm lint           eslint . (0 errors)
-$ pnpm test           Tasks: 6 successful, 6 total
-                      apply 33 + sources 34 + db 6, core/llm/render cached
+posted = [ { path: "/submit/greenhouse", body:
+  "first_name=Priya&last_name=Sharma&email=priya.sharma%40example.com&
+   phone=%2B91+98765+43210&resume=jobpilot-resume-<stamp>.pdf&
+   cover_letter=I+build+reliable+systems.+<stamp>" } ]
 ```
+
+Gate 4.10 additionally asserts the mock received nothing while the years question
+was unanswered, then exactly one `/submit/multi` carrying `years=8`.
+
+Persisted rows after the run:
+
+```
+  status   | apps
+-----------+------
+ QUEUED    |    6
+ SUBMITTED |    2
+
+   type   | count
+----------+-------
+ ATTACH   |     2
+ CREATED  |     8
+ FILL     |    10
+ NAVIGATE |     2
+ STATUS   |     2
+ SUBMIT   |     2
+
+       action       | count
+--------------------+-------
+ application.create |     8
+ application.result |     2
+ browser.attach     |     2
+ browser.fill       |    10
+ browser.navigate   |     2
+ browser.submit     |     2
+```
+
+Each of the two completed runs has one `NAVIGATE`, five `FILL`s, one `ATTACH` and
+one `SUBMIT` event, and the `browser.*` audit rows match those counts exactly, so
+no browser action goes unrecorded (I8). The pagination-free `/audit` page shows
+`browser.submit` and `application.result` for the run.
+
+### Verification for the phase
+
+```
+TYPECHECK_EXIT=0   Tasks: 9 successful, 9 total
+LINT_EXIT=0        eslint . (0 errors)
+TEST_EXIT=0        Tasks: 6 successful, 6 total
+                   apply 40 + sources 34 + db 6, core/llm/render cached
+E2E_EXIT=0         19 passed (1.4m)
+```
+
+## Phase 4 status
+
+All ten Phase 4 gates are [MET] with the evidence above. Four defects were found
+while proving them and fixed at the cause rather than worked around: the
+autocomplete key normalization, the `\bconvict\b` word boundary, the missing
+`exports` map that made `@jobpilot/apply` unresolvable from the e2e specs, and an
+e2e helper that passed `basics` where the planner expects `{ basics }`.

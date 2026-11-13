@@ -11,6 +11,7 @@
     "e2e": "playwright test"
   },
   "dependencies": {
+    "@jobpilot/apply": "workspace:*",
     "@jobpilot/core": "workspace:*",
     "@jobpilot/db": "workspace:*",
     "@jobpilot/llm": "workspace:*",
