@@ -1,6 +1,7 @@
 import { Prisma, PrismaClient } from "@prisma/client";
 import { redactDeep } from "@jobpilot/llm";
 import { buildFactIndex, type JsonResumeProfile } from "@jobpilot/core";
+import { EMBEDDING_MODEL, hashEmbedding, vectorLiteral } from "@jobpilot/core";
 import {
   canonicalizeUrl,
   contentHashOf,
@@ -373,4 +374,182 @@ export async function recordApplicationResult(
 
     return { id: updated.id, status: updated.status, events: updated._count.events };
   }, TX_OPTIONS);
+}
+
+export interface SaveMatchScoreInput {
+  jobId: string;
+  profileId: string;
+  score: number;
+  breakdown: Record<string, unknown>;
+  explanation: string;
+  algoVersion: number;
+}
+
+/**
+ * One MatchScore per (job, profile, algoVersion): recomputing overwrites the row
+ * in place, and changing the algorithm creates a new version instead of
+ * silently rewriting history (gate 5.5).
+ */
+export async function saveMatchScore(
+  input: SaveMatchScoreInput,
+): Promise<{ id: string; score: number }> {
+  return prisma.matchScore.upsert({
+    where: {
+      jobId_profileId_algoVersion: {
+        jobId: input.jobId,
+        profileId: input.profileId,
+        algoVersion: input.algoVersion,
+      },
+    },
+    update: {
+      score: input.score,
+      breakdown: input.breakdown as Prisma.InputJsonValue,
+      explanation: input.explanation,
+    },
+    create: {
+      jobId: input.jobId,
+      profileId: input.profileId,
+      score: input.score,
+      breakdown: input.breakdown as Prisma.InputJsonValue,
+      explanation: input.explanation,
+      algoVersion: input.algoVersion,
+    },
+    select: { id: true, score: true },
+  });
+}
+
+/** Matches for one profile, best first, optionally above a threshold (gate 5.2). */
+export async function listMatches(
+  profileId: string,
+  options: { threshold?: number; take?: number } = {},
+) {
+  return prisma.matchScore.findMany({
+    where: {
+      profileId,
+      ...(options.threshold !== undefined ? { score: { gte: options.threshold } } : {}),
+    },
+    orderBy: [{ score: "desc" }, { id: "asc" }],
+    take: options.take ?? 50,
+    include: {
+      job: {
+        select: {
+          id: true,
+          title: true,
+          company: true,
+          location: true,
+          remote: true,
+          url: true,
+          postedAt: true,
+        },
+      },
+    },
+  });
+}
+
+/** Stores a deterministic embedding for a posting, plus the model that made it. */
+export async function saveJobEmbedding(
+  jobId: string,
+  text: string,
+  model: string = EMBEDDING_MODEL,
+): Promise<number[]> {
+  const vector = hashEmbedding(text);
+  await prisma.$executeRaw`
+    UPDATE "Job"
+       SET embedding = ${vectorLiteral(vector)}::vector,
+           "embeddingModel" = ${model}
+     WHERE id = ${jobId}
+  `;
+  return vector;
+}
+
+/** Reads a stored embedding back, with its dimensionality, for verification. */
+export async function getJobEmbedding(
+  jobId: string,
+): Promise<{ vector: number[]; dims: number; model: string | null } | null> {
+  const rows = await prisma.$queryRaw<
+    Array<{ embedding: string | null; dims: number | null; model: string | null }>
+  >`
+    SELECT embedding::text AS embedding,
+           vector_dims(embedding) AS dims,
+           "embeddingModel" AS model
+      FROM "Job"
+     WHERE id = ${jobId}
+  `;
+  const row = rows[0];
+  if (!row?.embedding) return null;
+  return {
+    vector: JSON.parse(row.embedding) as number[],
+    dims: row.dims ?? 0,
+    model: row.model,
+  };
+}
+
+/** Nearest postings to a text, by cosine distance in pgvector (gate 5.6). */
+export async function rankJobsBySimilarity(
+  text: string,
+  limit = 5,
+): Promise<Array<{ id: string; title: string; similarity: number }>> {
+  const literal = vectorLiteral(hashEmbedding(text));
+  const rows = await prisma.$queryRaw<
+    Array<{ id: string; title: string; similarity: number }>
+  >`
+    SELECT id, title, 1 - (embedding <=> ${literal}::vector) AS similarity
+      FROM "Job"
+     WHERE embedding IS NOT NULL
+     ORDER BY embedding <=> ${literal}::vector
+     LIMIT ${limit}
+  `;
+  return rows.map((row) => ({ ...row, similarity: Number(row.similarity) }));
+}
+
+export interface GapReportInput {
+  userId: string;
+  inputJobIds: string[];
+  gaps: Array<{ keyword: string; jobs: string[]; severity: "high" | "medium" | "low" }>;
+}
+
+/** Stores the skill gaps found across the postings the user picked (gate 5.7). */
+export async function saveGapReport(input: GapReportInput): Promise<{ id: string }> {
+  return prisma.$transaction(async (tx) => {
+    const report = await tx.gapReport.create({
+      data: {
+        userId: input.userId,
+        inputJobIds: input.inputJobIds,
+        gaps: input.gaps as unknown as Prisma.InputJsonValue,
+      },
+      select: { id: true },
+    });
+    await tx.auditLog.create({
+      data: {
+        actor: "SYSTEM",
+        action: "match.gap",
+        entityType: "GapReport",
+        entityId: report.id,
+        payload: redactDeep({
+          jobs: input.inputJobIds.length,
+          gaps: input.gaps.length,
+        }) as object,
+      },
+    });
+    return report;
+  }, TX_OPTIONS);
+}
+
+/**
+ * Project plans start as SUGGESTED with no repository and no measured metrics,
+ * so nothing can claim a result that was never built (gate 5.8).
+ */
+export async function saveProjectPlans(
+  gapReportId: string,
+  blueprints: Array<{ title: string; steps: string[] }>,
+): Promise<number> {
+  if (blueprints.length === 0) return 0;
+  const result = await prisma.projectPlan.createMany({
+    data: blueprints.map((blueprint) => ({
+      gapReportId,
+      blueprint: blueprint as unknown as Prisma.InputJsonValue,
+      status: "SUGGESTED",
+    })),
+  });
+  return result.count;
 }

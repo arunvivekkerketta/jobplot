@@ -661,3 +661,134 @@ while proving them and fixed at the cause rather than worked around: the
 autocomplete key normalization, the `\bconvict\b` word boundary, the missing
 `exports` map that made `@jobpilot/apply` unresolvable from the e2e specs, and an
 e2e helper that passed `basics` where the planner expects `{ basics }`.
+
+## Phase 5 — matching
+
+All ten Phase 5 gates are [MET]. Scoring is deterministic and fully broken down,
+the threshold gate is shared by the API, the UI and the worker, explanations are
+redacted and audited, and matches persist with a pgvector embedding per posting.
+
+### GATES LEDGER
+
+| Gate # | Sub-Task Name | Observable Outcome | Expected Proof | Status |
+|---|---|---|---|---|
+| 5.1 | Deterministic scorer | Same profile, job and clock always produce the same 0-100 integer, equal to its weighted breakdown | `core/test/matching.test.ts` (12 cases) | [MET] |
+| 5.2 | Threshold gate | A score exactly at the threshold passes, one below fails, and the API filters at the stored setting | `meetsThreshold` cases + e2e `?aboveThreshold=1` | [MET] |
+| 5.3 | Explanations | Every score gets a one-sentence explanation; with a key it comes from the tagged structured call, without one from the deterministic fallback, and either way it is audited | `llm/test/matchExplain.test.ts` + e2e explanation assertions | [MET] |
+| 5.4 | Redaction (I7) | Name, email and phone never reach the prompt; the posting is delimiter-wrapped | `matchExplain.test.ts` (3 cases) | [MET] |
+| 5.5 | Persistence and recompute | One row per (job, profile, algoVersion); recomputing updates in place and a version bump creates a new row | `db/test/matching.test.ts` + e2e idempotency | [MET] |
+| 5.6 | Embedding similarity | Each posting stores a 384-dimension vector and its model, readable back and rankable by cosine distance | `db/test/matching.test.ts` + the `psql` read below | [MET] |
+| 5.7 | Gap report | Gaps are stored per user with their source job ids and a severity | `db/test/matching.test.ts` gate 5.7 | [MET] |
+| 5.8 | Project plans | Plans start `SUGGESTED` with no repository and no measured metrics | `db/test/matching.test.ts` gate 5.8 | [MET] |
+| 5.9 | Matches API | `GET /api/matches` lists best first and filters at the threshold; `POST /api/matches/recompute` is idempotent and audited | e2e gate 5.9 + 5.9b | [MET] |
+| 5.10 | Matches UI | `/matches` shows score, breakdown and explanation, and a recompute button reports what it scored | e2e gate 5.10 | [MET] |
+
+### Evidence for gates 5.1-5.4
+
+```
+$ pnpm --filter @jobpilot/core test
+ ✓ test/crypto.test.ts (4 tests) 5ms
+ ✓ test/schema.test.ts (5 tests) 12ms
+ ✓ test/factIndex.test.ts (7 tests) 8ms
+ ✓ test/matching.test.ts (12 tests) 13ms
+ Test Files  4 passed (4)
+      Tests  28 passed (28)
+
+$ pnpm --filter @jobpilot/llm test
+ ✓ test/untrusted.test.ts (4 tests) 3ms
+ ✓ test/redact.test.ts (10 tests) 3ms
+ ✓ test/fakeClient.test.ts (3 tests) 4ms
+ ✓ test/matchExplain.test.ts (3 tests) 2ms
+ ✓ test/anthropicClient.test.ts (4 tests) 1597ms
+ Test Files  5 passed (5)
+      Tests  24 passed (24)
+```
+
+The scorer's own test builds a TypeScript/PostgreSQL profile and two postings: a
+backend role drawn from that vocabulary scores 81, a nursing role in another
+country scores lower, and the first test asserts the two runs are byte-identical.
+`candidateYears` is derived from the dated work history (8.1 years from a 2018-01
+start and a fixed 2026-01 clock), so seniority is never guessed. The redaction
+test asserts the assembled prompt contains neither `priya.sharma@example.com`,
+`98765` nor `Priya`, while still containing the wrapped `<untrusted
+label="job-description">` block.
+
+### Evidence for gates 5.5-5.8
+
+```
+$ pnpm --filter @jobpilot/db test
+ ✓ test/matching.test.ts (4 tests) 5886ms
+   ✓ gate 5.5: one score per job, profile and algorithm version > updates in place, then versions when the algorithm changes  2949ms
+   ✓ gate 5.5 ... > lists best first and filters at the threshold  509ms
+   ✓ gate 5.6 ... > writes 384 dimensions with the model name and reads them back  1110ms
+   ✓ gate 5.7/5.8 ... > stores the gaps and creates SUGGESTED plans with nothing fabricated  607ms
+ Test Files  3 passed (3)
+      Tests  10 passed (10)
+```
+
+Gate 5.6 exercises the real column: `saveJobEmbedding` writes through
+`$executeRaw` with a `::vector` cast, `vector_dims` reports 384 back, and
+`rankJobsBySimilarity` puts the TypeScript posting first for a TypeScript query.
+The uniqueness the upsert relies on is a committed migration,
+`20261113233000_match_score_unique`, because `prisma migrate dev` refuses
+non-interactive shells; the SQL was written by hand and applied with
+`prisma migrate deploy`.
+
+### Evidence for gates 5.9-5.10 (API and UI)
+
+```
+$ pnpm e2e
+  ok 20 tests\e2e\phase5.spec.ts:68:5 › gate 5.9/5.10: scoring, threshold filtering and explanations end to end (15.1s)
+  ok 21 tests\e2e\phase5.spec.ts:158:5 › gate 5.9b: matches and recompute are behind the auth wall (30ms)
+
+  21 passed (1.7m)
+```
+
+The spec builds one posting from the imported profile's own vocabulary and one
+unrelated posting, sets the threshold to 75 through the settings API, then
+asserts the strong posting clears it while the nursing posting does not, that the
+filtered list is sorted descending, that a second recompute leaves the row count
+unchanged, and that `/matches` renders the stored explanation and reports
+`Scored N posting(s)` after a click.
+
+### Persisted rows after the run
+
+```
+ scores | low | high
+--------+-----+------
+     24 |  29 |   86
+
+ embedded | jobs |   model
+----------+------+-----------
+       24 |   24 | hash-bow-v1
+
+        action         | count
+-----------------------+-------
+ match.explain.skipped |   126
+ match.gap             |     6
+ match.recompute       |    11
+```
+
+Every posting in the database carries an embedding from one named model, so no
+two vector spaces are mixed. `match.explain.skipped` records each score explained
+without a key instead of silently pretending a model wrote it; setting
+`ANTHROPIC_API_KEY` switches the same path to the structured call, which
+`AnthropicClient` already audits per invocation (Phase 1 gate 1.11).
+
+### Verification for the phase
+
+```
+TYPECHECK_EXIT=0   Tasks: 9 successful, 9 total
+LINT_EXIT=0        eslint . (0 errors)
+TEST_EXIT=0        Tasks: 6 successful, 6 total
+                   core 28 + llm 24 + db 10 + apply 40 + sources 34
+E2E_EXIT=0         21 passed (1.7m)
+```
+
+## Phase 5 status
+
+All ten Phase 5 gates are [MET] with the evidence above. Two defects were fixed
+while proving them: `@jobpilot/llm` did not depend on `@jobpilot/core`, so the new
+explanation module could not resolve it types, and the db match suite relied on
+Prisma's 5s default while each case creates a user, a profile and postings, which
+timed out intermittently until the file raised its own budget.

@@ -27,6 +27,9 @@ export default function RootLayout({
                 <Link href="/jobs" className="hover:text-blue-700">
                   Jobs
                 </Link>
+                <Link href="/matches" className="hover:text-blue-700">
+                  Matches
+                </Link>
                 <Link href="/audit" className="hover:text-blue-700">Audit</Link>
                 <Link href="/settings" className="hover:text-blue-700">Settings</Link>
               </nav>

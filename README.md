@@ -10,7 +10,9 @@ adapters, paste-and-import, canonical-URL dedupe and the scheduled
 `fetch-sources` queue), and **Phase 4 — application executor** (canonical field
 mapping, the Answer Bank resolver, the stop gate and a browser runner proven
 against the mock ATS). Later phases add matching, tailoring and Auto-Pilot;
-the rules every phase must follow live in `CLAUDE.md`.
+against the mock ATS), and **Phase 5 — matching** (deterministic scores with a
+threshold gate, redacted explanations and pgvector embeddings). Later phases add
+tailoring and Auto-Pilot; the rules every phase must follow live in `CLAUDE.md`.
 
 ## Requirements
 
@@ -70,8 +72,8 @@ already-running server or starts `next dev` itself.
 apps/web        Next.js 15 App Router UI, Auth.js credentials login, API routes
 apps/worker     pg-boss worker entrypoint
 apps/mock-ats   Local mock applicant-tracking system used by apply tests
-packages/core   Pure domain logic: crypto, profile schema, Fact Index, aliases
-packages/db     Prisma schema, migrations, seed, audit + profile persistence
+packages/core   Pure domain logic: crypto, profile schema, Fact Index, matching
+packages/db     Prisma schema, migrations, audit, profile, job and match writes
 packages/llm    Anthropic client with retry/repair/timeout, redaction, wrappers
 packages/render HTML, PDF and DOCX resume rendering plus ATS lint
 packages/sources Job-board adapters, canonical URLs, fetch-sources handler
@@ -92,9 +94,10 @@ enforced in code, not just documented — see `CLAUDE.md` for the full protocol.
 
 ## Phase status
 
-All 15 Phase 1 gates, 9 Phase 2 gates, 18 Phase 3 gates and 10 Phase 4 gates are
-met; the exact commands and outputs are recorded in
+All 15 Phase 1 gates, 9 Phase 2 gates, 18 Phase 3 gates, 10 Phase 4 gates and 10
+Phase 5 gates are met; the exact commands and outputs are recorded in
 [`docs/GATES.md`](docs/GATES.md). Job boards can be fetched in the background and
-postings pasted by hand, and an application can be filled and submitted against
-the mock ATS behind the kill switch, caps, rate limit and consent checks, with
-every browser action audited.
+postings pasted by hand, an application can be filled and submitted against the
+mock ATS behind the kill switch, caps, rate limit and consent checks with every
+browser action audited, and each posting is scored, explained and embedded so the
+threshold decides what is eligible to apply.

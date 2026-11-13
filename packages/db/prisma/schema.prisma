@@ -89,6 +89,7 @@ model MatchScore {
   createdAt   DateTime @default(now())
 
   @@index([profileId, score])
+  @@unique([jobId, profileId, algoVersion])
 }
 
 model ResumeVersion {
