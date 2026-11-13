@@ -387,3 +387,135 @@ PostgreSQL 17.11 + pgvector cluster on port 55432 (Docker is not installed on
 this machine). The cluster in this checkout was created with `initdb` from the
 existing portable pgvector install, then migrated and seeded with
 `pnpm db:migrate && pnpm db:seed`.
+
+## Phase 3 — job sources
+
+### GATES LEDGER
+
+| Gate # | Sub-Task Name | Observable Outcome | Expected Proof | Status |
+|---|---|---|---|---|
+| 3.1 | Normalized draft boundary | Every adapter output is parsed by one zod schema; a malformed board payload fails at the boundary | `jobDraftSchema` rejects a payload of bare ids | [MET] |
+| 3.2 | Canonical posting URL | Tracking params, fragments, default ports and trailing slashes are stripped; params sorted | `canonical.test.ts` (3 cases) | [MET] |
+| 3.3 | Content hash | Formatting churn hashes identically; real edits change the hash | `canonical.test.ts` (2 cases) | [MET] |
+| 3.4 | Greenhouse adapter | Board JSON maps to drafts with HTML converted and timestamps kept in UTC | `parseGreenhouse` over `fixtures/greenhouse.json` | [MET] |
+| 3.5 | Lever adapter | Postings map with workplace type, categories and joined description sections | `parseLever` over `fixtures/lever.json` | [MET] |
+| 3.6 | Ashby adapter | Jobs map and the compensation summary becomes a salary range | `parseAshby` over `fixtures/ashby.json` | [MET] |
+| 3.7 | Adzuna adapter | Search results map; missing credentials raise a config error instead of an empty list | `parseAdzuna` fixture + `fetchAdzuna` rejection | [MET] |
+| 3.8 | Untrusted description text | Scripts and styles are stripped; the manual path stores a delimiter-wrapped copy (I2) | `html.test.ts` + manual draft assertion | [MET] |
+| 3.9 | Board transport | Retries 5xx and 429, never retries 404, aborts at the timeout, reports non-JSON | `http.test.ts` (5 cases) | [MET] |
+| 3.10 | Import dedupe | A tracking-param variant updates the existing row instead of creating one | `saveJobs` DB test: created 1 then updated 1, one row | [MET] |
+| 3.11 | Import audit | Each batch writes exactly one `job.import` row in the same transaction (I8) | DB test reads `job.import` payload counts | [MET] |
+| 3.12 | Auth wall | `/jobs`, `GET/POST /api/jobs` and `POST /api/jobs/fetch` redirect anonymous callers to `/login` (307) | e2e gate 3.12 | [MET] |
+| 3.13 | Board request validation | Unknown provider and empty token return 422 with zod issues; Adzuna without keys returns 400 naming the env vars | e2e gate 3.13 | [MET] |
+| 3.13b | Board failure reporting | An unreachable board returns 502 with a message and writes `job.fetch.failed` | e2e gate 3.13b and `/audit` | [MET] |
+| 3.14 | Paste-and-import | A pasted posting appears in the table, and re-importing the same posting via another URL surface updates it (one row) | e2e gate 3.14 | [MET] |
+| 3.14b | Import API validation | Missing fields and non-http schemes return 422; a valid payload returns 201 and re-posting updates the same id | e2e gate 3.14b | [MET] |
+| 3.15 | fetch-sources consumer | The worker handler saves, audits success, and audits with `ok:false` when a board dies | `handler.test.ts` (3 cases) | [MET] |
+| 3.16 | Scheduled boards | `JOB_BOARDS` parses `provider:token` pairs and skips unknown or malformed entries | `handler.test.ts` (2 cases) | [MET] |
+
+### Evidence for gates 3.1-3.9 (adapter layer, no network)
+
+```
+$ pnpm --filter @jobpilot/sources test
+ ✓ test/html.test.ts (4 tests) 2ms
+ ✓ test/canonical.test.ts (5 tests) 3ms
+ ✓ test/http.test.ts (5 tests) 20ms
+ ✓ test/adapters.test.ts (15 tests) 6ms
+ ✓ test/handler.test.ts (5 tests) 5ms
+
+ Test Files  5 passed (5)
+      Tests  34 passed (34)
+```
+
+The adapter tests run against committed fixtures in `packages/sources/test/fixtures`
+with an injected `fetchImpl`, so no unit test opens a socket. `http.test.ts` proves
+the retry policy directly: a 503 is retried and succeeds on attempt 2, a 404 is not
+retried, a third 502 exhausts the budget after delays of 250ms then 500ms, a stalled
+response aborts at `timeoutMs`, and a non-JSON body is reported as `kind: "parse"`.
+
+### Evidence for gates 3.10-3.11 (dedupe and audit against the real database)
+
+```
+$ pnpm --filter @jobpilot/db test
+ ✓ test/facts.test.ts (2 tests) 2198ms
+ ✓ test/jobs.test.ts (4 tests) 2230ms
+   ✓ gate 3.10: importing postings dedupes on the canonical URL > creates once, then updates the same row for a tracking-param variant  2208ms
+
+ Test Files  2 passed (2)
+      Tests  6 passed (6)
+```
+
+The test imports `…/role-<stamp>?utm_source=newsletter&gh_src=abc` and then
+`…/role-<stamp>/`, asserts `created: 1` followed by `created: 0, updated: 1` with
+the same id, and confirms one row whose `canonicalUrl` carries neither tracking
+params nor a trailing slash. It also proves a changed description changes
+`contentHash`, that the I2 wrapper survives the round trip through Postgres, and
+that `job.import` audit payloads record `created`, `updated` and `total`.
+
+### Evidence for gates 3.12-3.14b (browser and API)
+
+```
+$ pnpm e2e
+Running 15 tests using 1 worker
+  ok 11 tests\e2e\phase3.spec.ts:31:5 › gate 3.12: the jobs page and APIs sit behind the auth wall (48ms)
+  ok 12 tests\e2e\phase3.spec.ts:56:5 › gate 3.13: a malformed board request is rejected with 422 before any fetch (6.1s)
+  ok 13 tests\e2e\phase3.spec.ts:83:5 › gate 3.13b: an unreachable board is reported as 502 and audited (15.4s)
+  ok 14 tests\e2e\phase3.spec.ts:98:5 › gate 3.14: a pasted posting imports once, then updates in place (11.0s)
+  ok 15 tests\e2e\phase3.spec.ts:134:5 › gate 3.14b: the import API validates its input (422) and rejects other schemes (2.8s)
+
+  15 passed (1.8m)
+```
+
+Gate 3.13b reaches the real Lever API with a nonexistent board slug, so transport,
+error mapping and the audit row are exercised end to end without depending on a
+live vacancy existing.
+
+### Persisted rows after the run
+
+```
+ source | jobs | canonical_urls
+--------+------+----------------
+ manual |    2 |              2
+
+      action      | count
+------------------+-------
+ job.fetch.failed |     2
+ job.import       |     4
+
+ total_jobs
+------------
+          2
+```
+
+Four `job.import` batches produced two rows. The gate 3.14 spec imports one posting
+twice, first with tracking parameters and then with a trailing slash, and the row
+count for that posting stays at one, which is dedupe visible in the database rather
+than only in an assertion.
+
+### Design notes
+
+Adapters only parse; fetching lives in a separate `fetch*` function that accepts an
+injectable `fetchImpl`, so parsing is proven from fixtures while transport is proven
+by its own retry tests. `saveJobs` does find-then-update/create inside one
+interactive transaction and writes the `job.import` audit row there too, so a batch
+either lands with its audit row or not at all. The worker is a thin shell:
+`makeFetchSourcesHandler` owns the fetch, save and audit sequence and is unit-tested,
+while `apps/worker` only wires pg-boss to it. Manual imports wrap the pasted
+description with `wrapUntrusted` before storage, so later phases read it as data
+(I2), and board failures are audited rather than swallowed.
+
+### Verification for the phase
+
+```
+TYPECHECK_EXIT=0   Tasks: 9 successful, 9 total
+LINT_EXIT=0        eslint . (0 errors)
+TEST_EXIT=0        sources 34 + db 6, all workspace suites green
+E2E_EXIT=0         15 passed (1.8m)
+```
+
+## Phase 3 status
+
+All 18 Phase 3 gates are [MET] with the evidence above. Two gate labels were
+renumbered while writing this ledger, because the worker consumer and the
+scheduled-board parser became 3.15 and 3.16 so that test titles, ledger rows and
+commits name the same gate. The sources suite was re-run after the rename.

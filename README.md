@@ -3,9 +3,11 @@
 Job-application copilot with a deterministic Fact Index and a watermark-guarded
 apply pipeline. This repository currently contains **Phase 1 — foundation and
 master profile** (authentication, profile import, the Fact Index, settings and
-the audit trail) and **Phase 2 — document rendering** (HTML, PDF and DOCX resumes
+the audit trail), **Phase 2 — document rendering** (HTML, PDF and DOCX resumes
 that are claim-validated against the Fact Index, ATS lint, and the Documents
-UI/API). Later phases add job sources, matching, tailoring and the apply worker;
+UI/API), and **Phase 3 — job sources** (Greenhouse, Lever, Ashby and Adzuna
+adapters, paste-and-import, canonical-URL dedupe and the scheduled
+`fetch-sources` queue). Later phases add matching, tailoring and the apply worker;
 the rules every phase must follow live in `CLAUDE.md`.
 
 ## Requirements
@@ -50,7 +52,7 @@ machine keeps a cluster in `.pgdata` (gitignored, port 55432) started with:
 | `pnpm build` | Build all packages and apps |
 | `pnpm lint` | ESLint across the workspace |
 | `pnpm typecheck` | `tsc --noEmit` in every package |
-| `pnpm test` | vitest unit tests (core, llm, db) |
+| `pnpm test` | vitest unit tests (core, llm, db, render, sources) |
 | `pnpm e2e` | Playwright against a dev server on :3000 |
 | `pnpm db:migrate` | Apply committed Prisma migrations |
 | `pnpm db:seed` | Upsert the admin user and default Settings |
@@ -70,7 +72,7 @@ packages/core   Pure domain logic: crypto, profile schema, Fact Index, aliases
 packages/db     Prisma schema, migrations, seed, audit + profile persistence
 packages/llm    Anthropic client with retry/repair/timeout, redaction, wrappers
 packages/render HTML, PDF and DOCX resume rendering plus ATS lint
-packages/sources Phase-3 job-source adapters boundary
+packages/sources Job-board adapters, canonical URLs, fetch-sources handler
 packages/apply  Phase-4 application executor boundary
 fixtures/       Sample JSON Resume used by tests
 docs/GATES.md   Phase gate ledger with evidence blocks
@@ -88,5 +90,7 @@ enforced in code, not just documented — see `CLAUDE.md` for the full protocol.
 
 ## Phase status
 
-All 15 Phase 1 gates and all 9 Phase 2 gates are met; the exact commands and
-outputs are recorded in [`docs/GATES.md`](docs/GATES.md).
+All 15 Phase 1 gates, all 9 Phase 2 gates and all 18 Phase 3 gates are met; the
+exact commands and outputs are recorded in [`docs/GATES.md`](docs/GATES.md).
+Job boards can be fetched in the background and postings pasted by hand; every
+import is deduped on its canonical URL and audited.

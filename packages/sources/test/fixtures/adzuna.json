@@ -1,0 +1,27 @@
+{
+  "results": [
+    {
+      "id": "adz-9001",
+      "title": "Backend Developer (Python)",
+      "company": { "display_name": "NimbusPay" },
+      "location": { "display_name": "Bengaluru, Karnataka" },
+      "redirect_url": "https://www.adzuna.in/details/9001?utm_medium=api&utm_source=abc123",
+      "description": "<b>NimbusPay</b> is hiring. Build payment services in Python and Go.",
+      "created": "2026-03-30T06:45:00Z",
+      "salary_min": 2400000,
+      "salary_max": 3600000,
+      "contract_time": "full_time"
+    },
+    {
+      "id": 9002,
+      "title": "SRE",
+      "company": { "display_name": "DataForge" },
+      "location": { "display_name": "Remote" },
+      "redirect_url": "https://www.adzuna.in/details/9002",
+      "description": "Keep the platform up.",
+      "created": "2026-03-25T00:00:00Z",
+      "salary_min": 1800000,
+      "contract_time": "full_time"
+    }
+  ]
+}

@@ -1,6 +1,11 @@
 import { Prisma, PrismaClient } from "@prisma/client";
 import { redactDeep } from "@jobpilot/llm";
 import { buildFactIndex, type JsonResumeProfile } from "@jobpilot/core";
+import {
+  canonicalizeUrl,
+  contentHashOf,
+  type JobDraft,
+} from "@jobpilot/sources";
 
 export { hash as hashPassword, verify as verifyPassword } from "@node-rs/argon2";
 
@@ -131,6 +136,96 @@ export async function saveProfileWithFacts(
     return { profileId: saved.id, version, factCount: factRows.length };
   }, TX_OPTIONS);
   return result;
+}
+
+export interface SaveJobsResult {
+  created: number;
+  updated: number;
+  total: number;
+  ids: string[];
+}
+
+/**
+ * Upserts normalized postings on their canonical URL, so the same role arriving
+ * from a board, an email link or a manual paste updates one row instead of
+ * creating duplicates (gates 3.10, 3.11). The `job.import` audit row is written
+ * in the same transaction as the postings (I8).
+ */
+export async function saveJobs(
+  drafts: JobDraft[],
+  options: { actor?: "SYSTEM" | "USER" } = {},
+): Promise<SaveJobsResult> {
+  if (drafts.length === 0) {
+    return { created: 0, updated: 0, total: 0, ids: [] };
+  }
+
+  return prisma.$transaction(async (tx) => {
+    let created = 0;
+    let updated = 0;
+    const ids: string[] = [];
+    const fetchedAt = new Date();
+
+    for (const draft of drafts) {
+      const canonicalUrl = canonicalizeUrl(draft.url);
+      const parsed = {
+        ...draft.parsed,
+        ...(draft.keywords.length > 0 ? { keywords: draft.keywords } : {}),
+      };
+      const data = {
+        source: draft.source,
+        externalId: draft.externalId ?? null,
+        url: draft.url,
+        canonicalUrl,
+        company: draft.company,
+        title: draft.title,
+        location: draft.location ?? null,
+        remote: draft.remote,
+        salaryMin: draft.salaryMin ?? null,
+        salaryMax: draft.salaryMax ?? null,
+        currency: draft.currency ?? null,
+        descriptionText: draft.descriptionText,
+        parsed: parsed as Prisma.InputJsonValue,
+        postedAt: draft.postedAt ? new Date(draft.postedAt) : null,
+        contentHash: contentHashOf(draft),
+        fetchedAt,
+      };
+
+      const existing = await tx.job.findUnique({
+        where: { canonicalUrl },
+        select: { id: true },
+      });
+
+      if (existing) {
+        const saved = await tx.job.update({
+          where: { id: existing.id },
+          data,
+          select: { id: true },
+        });
+        updated += 1;
+        ids.push(saved.id);
+      } else {
+        const saved = await tx.job.create({ data, select: { id: true } });
+        created += 1;
+        ids.push(saved.id);
+      }
+    }
+
+    await tx.auditLog.create({
+      data: {
+        actor: options.actor ?? "USER",
+        action: "job.import",
+        entityType: "Job",
+        payload: redactDeep({
+          created,
+          updated,
+          total: drafts.length,
+          sources: [...new Set(drafts.map((draft) => draft.source))],
+        }) as Prisma.InputJsonValue,
+      },
+    });
+
+    return { created, updated, total: drafts.length, ids };
+  }, TX_OPTIONS);
 }
 
 interface FactRow {

@@ -1,0 +1,28 @@
+{
+  "jobs": [
+    {
+      "id": "ashby-0001",
+      "title": "Machine Learning Engineer",
+      "location": "Remote (Global)",
+      "department": "Research",
+      "employmentType": "FullTime",
+      "publishedAt": "2026-02-11T09:30:00.000Z",
+      "isRemote": true,
+      "descriptionHtml": "<p>Train and ship ranking models.</p><ul><li>Own feature pipelines in Python</li></ul>",
+      "jobUrl": "https://jobs.ashbyhq.com/acme/ashby-0001?ashby_source=board",
+      "applyUrl": "https://jobs.ashbyhq.com/acme/ashby-0001/application",
+      "compensation": { "compensationTierSummary": "$150K \u2013 $185K" }
+    },
+    {
+      "id": "ashby-0002",
+      "title": "Support Engineer",
+      "location": "Austin, TX",
+      "department": "Support",
+      "employmentType": "FullTime",
+      "publishedAt": "2026-01-05T12:00:00.000Z",
+      "isRemote": false,
+      "descriptionPlain": "Help customers integrate our API.",
+      "jobUrl": "https://jobs.ashbyhq.com/acme/ashby-0002"
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "jobs": [
+    {
+      "id": 4012345,
+      "title": "Senior Backend Engineer",
+      "absolute_url": "https://boards.greenhouse.io/acme/jobs/4012345?utm_source=linkedin&utm_medium=social",
+      "updated_at": "2026-04-02T10:15:00-04:00",
+      "location": { "name": "Remote - Europe" },
+      "content": "<div><p>We are hiring a <strong>Senior Backend Engineer</strong> to own our payments platform.</p><script>alert('steal()')</script><ul><li>Build Python services on Kubernetes</li><li>Own Kafka pipelines processing 9k events per second</li></ul><p>Compensation: competitive &amp; reviewed yearly.</p></div>",
+      "metadata": [
+        { "name": "Team", "value": "Payments" },
+        { "name": "Employment Type", "value": "Full-time" }
+      ]
+    },
+    {
+      "id": 4012346,
+      "title": "Data Engineer",
+      "absolute_url": "https://boards.greenhouse.io/acme/jobs/4012346",
+      "updated_at": "2026-03-21T08:00:00Z",
+      "location": { "name": "Bengaluru, India" },
+      "content": "<p>Build ETL pipelines in Python and Airflow.</p>",
+      "metadata": []
+    }
+  ]
+}

@@ -21,6 +21,7 @@ const nextConfig: NextConfig = {
     "@jobpilot/db",
     "@jobpilot/llm",
     "@jobpilot/render",
+    "@jobpilot/sources",
   ],
   // Argon2 ships a prebuilt .node binary; webpack cannot parse it.
   serverExternalPackages: ["@node-rs/argon2", "pdfkit", "docx"],

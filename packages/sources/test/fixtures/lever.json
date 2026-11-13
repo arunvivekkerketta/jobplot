@@ -1,0 +1,29 @@
+[
+  {
+    "id": "8f2c1b7a-1111-4c2f-9a3e-000000000001",
+    "text": "Staff Software Engineer, Platform",
+    "hostedUrl": "https://jobs.lever.co/acme/8f2c1b7a-1111-4c2f-9a3e-000000000001?lever-source=LinkedIn",
+    "createdAt": 1712123456789,
+    "workplaceType": "remote",
+    "categories": {
+      "location": "Remote (US)",
+      "team": "Platform",
+      "commitment": "Full-time",
+      "allLocations": ["Remote (US)", "Remote (Canada)"]
+    },
+    "descriptionPlain": "Own the service mesh and the deploy pipeline.",
+    "additionalPlain": "We sponsor visas.",
+    "lists": [
+      { "text": "What you will do", "content": "<ul><li>Scale Kubernetes clusters</li><li>Reduce p99 latency below 90ms</li></ul>" }
+    ]
+  },
+  {
+    "id": "8f2c1b7a-1111-4c2f-9a3e-000000000002",
+    "text": "Product Designer",
+    "hostedUrl": "https://jobs.lever.co/acme/8f2c1b7a-1111-4c2f-9a3e-000000000002",
+    "createdAt": 1712120000000,
+    "categories": { "location": "London, UK", "team": "Design", "commitment": "Full-time" },
+    "description": "<p>Shape the hiring experience.</p>",
+    "lists": []
+  }
+]

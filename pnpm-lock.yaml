@@ -62,6 +62,9 @@ importers:
       '@jobpilot/render':
         specifier: workspace:*
         version: link:../../packages/render
+      '@jobpilot/sources':
+        specifier: workspace:*
+        version: link:../../packages/sources
       next:
         specifier: 15.5.4
         version: 15.5.4(@playwright/test@1.63.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -114,6 +117,9 @@ importers:
       '@jobpilot/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@jobpilot/sources':
+        specifier: workspace:*
+        version: link:../../packages/sources
       pg-boss:
         specifier: ^10.1.5
         version: 10.4.2
@@ -133,6 +139,9 @@ importers:
       '@jobpilot/core':
         specifier: workspace:*
         version: link:../core
+      '@jobpilot/llm':
+        specifier: workspace:*
+        version: link:../llm
     devDependencies:
       '@types/node':
         specifier: ^24.5.2
@@ -171,6 +180,9 @@ importers:
       '@jobpilot/llm':
         specifier: workspace:*
         version: link:../llm
+      '@jobpilot/sources':
+        specifier: workspace:*
+        version: link:../sources
       '@node-rs/argon2':
         specifier: ^2.0.0
         version: 2.2.1
@@ -249,6 +261,12 @@ importers:
       '@jobpilot/core':
         specifier: workspace:*
         version: link:../core
+      '@jobpilot/llm':
+        specifier: workspace:*
+        version: link:../llm
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
     devDependencies:
       '@types/node':
         specifier: ^24.5.2
