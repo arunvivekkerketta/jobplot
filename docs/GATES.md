@@ -519,3 +519,78 @@ All 18 Phase 3 gates are [MET] with the evidence above. Two gate labels were
 renumbered while writing this ledger, because the worker consumer and the
 scheduled-board parser became 3.15 and 3.16 so that test titles, ledger rows and
 commits name the same gate. The sources suite was re-run after the rename.
+
+## Phase 4 — application executor
+
+Phase 4 is in progress. The deterministic pre-submit layer (mapping, Answer Bank
+resolution, the stop gate and the fill plan) is implemented and proven below;
+the browser runner, the consent API and the mock-ATS end-to-end gates are still
+open, so this phase is **not** complete.
+
+### GATES LEDGER
+
+| Gate # | Sub-Task Name | Observable Outcome | Expected Proof | Status |
+|---|---|---|---|---|
+| 4.1 | Field mapper | Labels, name/id tokens and autocomplete map to a canonical key set; unknown controls map to `null` | `fields.test.ts` (10 cases) + `plan.test.ts` (9 cases) | [MET] |
+| 4.2 | Untrusted labels (I2) | An instruction-like label is flagged, never mapped, and only exposed delimiter-wrapped | `fields.test.ts` gate 4.2 + `plan.test.ts` gate 4.10 case | [MET] |
+| 4.3 | Sensitive detection (I5) | Salary, work authorization, disability, criminal history and demographics are flagged and never filled from the profile | `fields.test.ts` gate 4.3 + `plan.test.ts` gate 4.3 | [MET] |
+| 4.4 | Answer Bank resolution (I5) | Exact key beats `questionPattern`; ambiguous or malformed patterns fall back to the human | `answers.test.ts` (6 cases) | [MET] |
+| 4.5 | Stop preflight (I4) | Kill switch → daily cap → portal cap → per-domain interval → `allowSubmit`, each aborting with one reason code | `preflight.test.ts` (8 cases) | [MET] |
+| 4.6 | Consent (I3) | An unapproved resume or missing approval returns 409 and nothing reaches the mock | e2e against `apps/mock-ats` | [PENDING] |
+| 4.7 | Resume attachment | The approved PDF is attached to the file input and arrives as multipart | Plan side proven (4.7 test); browser side pending | [PENDING] |
+| 4.8 | Pause conditions (I4) | CAPTCHA, 2FA, login wall and session-expired set `PAUSED_NEEDS_HUMAN` with an event | e2e on `/edge/captcha` and `/edge/session-expired` | [PENDING] |
+| 4.9 | Action audit (I8) | Every browser action writes an `AuditLog` row and an `ApplicationEvent` | DB counts reconciled with `/__log` | [PENDING] |
+| 4.10 | Multi-step forms | The runner advances through steps and submits only after the last one | e2e on `/edge/multi-step` | [PENDING] |
+
+### Evidence for gates 4.1-4.5
+
+```
+$ pnpm --filter @jobpilot/apply typecheck
+> tsc --noEmit -p tsconfig.json
+TYPECHECK_EXIT=0
+```
+
+```
+$ pnpm --filter @jobpilot/apply test
+ ✓ test/preflight.test.ts (8 tests) 3ms
+ ✓ test/fields.test.ts (10 tests) 4ms
+ ✓ test/answers.test.ts (6 tests) 3ms
+ ✓ test/plan.test.ts (9 tests) 5ms
+
+ Test Files  4 passed (4)
+      Tests  33 passed (33)
+```
+
+Walkthrough: `fields.test.ts` copies the control descriptors straight from
+`apps/mock-ats` (Greenhouse, Lever, multi-step, salary, EEO, injection), so the
+mapper is proven against the markup the executor will actually meet, and asserts
+that autocomplete wins over an ambiguous "Name" label. `plan.test.ts` proves the
+plan reads only profile fields that exist (`Ada Lovelace` splits, the location
+joins), leaves a single-token surname and years of experience to the human, and
+requires an Answer Bank entry before either sensitive field is filled.
+`preflight.test.ts` pins the check order by making the kill switch win over a
+full cap and a fresh rate limit, and returns `retryAfterMs` for the interval.
+
+Two real defects were found and fixed while proving these gates rather than
+worked around. First, the autocomplete table keyed `given-name` while lookups
+normalize to alphanumerics, so `autocomplete="given-name"` could never match;
+both tables are now re-keyed through `normalizeToken` and the autocomplete test
+covers it. Second, the sensitive-topic pattern used `\bconvict\b`, which does not
+match "convicted of a crime" because the word continues; the pattern now uses
+`convict\w*` (with `felon\w*` and `disabilit\w*`) and the failing test passes.
+
+### Verification for the phase so far
+
+```
+TYPECHECK_EXIT=0   packages/apply (tsc --noEmit, no output)
+TEST_EXIT=0        33 tests across 4 files
+```
+
+Workspace-wide after the change:
+
+```
+$ pnpm typecheck      Tasks: 9 successful, 9 total
+$ pnpm lint           eslint . (0 errors)
+$ pnpm test           Tasks: 6 successful, 6 total
+                      apply 33 + sources 34 + db 6, core/llm/render cached
+```

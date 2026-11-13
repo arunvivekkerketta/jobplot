@@ -1,6 +1,10 @@
 /**
- * packages/apply — Playwright form runners, field mapper, submit gate
- * integration. Implemented in Phase 4. This module only establishes the
- * package boundary.
+ * packages/apply — deterministic pre-submit logic for the application executor:
+ * the field mapper, the Answer Bank resolver, the stop gate and the fill
+ * planner. Browser driving lives in the runner, which consumes these plans.
  */
-export const APPLY_PACKAGE_PHASE = 4;
+export * from "./types.js";
+export * from "./fields.js";
+export * from "./answers.js";
+export * from "./preflight.js";
+export * from "./plan.js";

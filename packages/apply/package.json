@@ -8,7 +8,8 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@jobpilot/core": "workspace:*"
+    "@jobpilot/core": "workspace:*",
+    "@jobpilot/llm": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^24.5.2",
