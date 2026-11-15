@@ -109,6 +109,35 @@ CI workflow on `main` succeeds, or on a manual `workflow_dispatch`. It needs no
 secrets: it authenticates to GHCR with the job's `GITHUB_TOKEN` and the workflow's
 `packages: write` permission.
 
+### Running the stack with compose
+
+`docker-compose.yml` brings up the database, applies migrations once, and starts
+both services only after that job succeeded and Postgres reported healthy:
+
+```bash
+docker compose up -d --build                  # build both images from this repo
+docker compose up -d db                       # database only (dev setup)
+docker compose --profile seed run --rm seed   # admin user + default Settings, once
+
+docker compose ps                             # db/migrate exited 0, web + worker running
+docker compose logs -f web worker
+```
+
+To run the images the deploy workflow published instead of building locally:
+
+```bash
+JOBPILOT_IMAGE_PREFIX=ghcr.io/<owner>/<repo> JOBPILOT_TAG=<commit-sha> \
+  docker compose up -d
+```
+
+`migrate` runs `pnpm db:migrate` in the `web` image and exits; `web` and `worker`
+declare `depends_on: migrate: condition: service_completed_successfully` plus
+`db: condition: service_healthy`. Seeding is a separate `seed` profile because it
+upserts the admin and resets `Settings` to the seed defaults. App configuration
+comes from the environment or a local `.env`; the defaults in the file are the
+throwaway development values, so set `APP_ENCRYPTION_KEY`, `NEXTAUTH_SECRET` and
+`POSTGRES_PASSWORD` for anything real.
+
 ## Layout
 
 ```

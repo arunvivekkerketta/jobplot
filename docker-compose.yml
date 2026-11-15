@@ -1,10 +1,47 @@
+# Local production-like stack: Postgres + migrations + the published images.
+#
+#   docker compose up -d db                       # database only (the dev setup)
+#   docker compose up -d --build                  # whole stack built from this repo
+#   JOBPILOT_IMAGE_PREFIX=ghcr.io/you/jobpilot JOBPILOT_TAG=<sha> docker compose up -d
+#                                                 # whole stack from published images
+#   docker compose --profile seed run --rm seed   # create the admin user + default Settings
+#
+# Values come from the environment or a local .env file next to this file. The
+# defaults are the throwaway development values used elsewhere in the repo; set
+# APP_ENCRYPTION_KEY, NEXTAUTH_SECRET and POSTGRES_PASSWORD for anything real.
+
+name: jobpilot
+
+x-database-url: &database-url postgresql://jobpilot:${POSTGRES_PASSWORD:-jobpilot}@db:5432/jobpilot
+
+# Shared by both app images: they read the same configuration as `pnpm dev`.
+x-app-env: &app-env
+  DATABASE_URL: *database-url
+  APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:-BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=}
+  NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-compose-secret-not-for-production}
+  AUTH_SECRET: ${NEXTAUTH_SECRET:-compose-secret-not-for-production}
+  NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
+  ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@jobpilot.local}
+  ADMIN_PASSWORD: ${ADMIN_PASSWORD:-jobpilot-admin}
+  # Optional integrations; empty values keep the deterministic/offline paths.
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  LLM_MODEL: ${LLM_MODEL:-}
+  EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-}
+  JOB_BOARDS: ${JOB_BOARDS:-}
+  ADZUNA_APP_ID: ${ADZUNA_APP_ID:-}
+  ADZUNA_APP_KEY: ${ADZUNA_APP_KEY:-}
+  SMTP_URL: ${SMTP_URL:-}
+  NOTIFY_WEBHOOK_URL: ${NOTIFY_WEBHOOK_URL:-}
+  AUTOPILOT_CRON: ${AUTOPILOT_CRON:-*/15 * * * *}
+  NEXT_TELEMETRY_DISABLED: "1"
+
 services:
   db:
     image: pgvector/pgvector:pg16
     container_name: jobpilot-db
     environment:
       POSTGRES_USER: jobpilot
-      POSTGRES_PASSWORD: jobpilot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jobpilot}
       POSTGRES_DB: jobpilot
     ports:
       - "5432:5432"
@@ -15,6 +52,67 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    restart: unless-stopped
+
+  # Runs once per `up`, then exits successfully: the app services wait for that
+  # success, so neither ever queries a schema that has not been migrated.
+  migrate:
+    image: ${JOBPILOT_IMAGE_PREFIX:-ghcr.io/jobpilot/jobpilot}/web:${JOBPILOT_TAG:-latest}
+    build:
+      context: .
+      target: web
+    command: ["pnpm", "db:migrate"]
+    environment:
+      DATABASE_URL: *database-url
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  # Opt-in: seeding upserts the admin and resets Settings to the seed defaults, so
+  # it does not run on every `up`. Use `docker compose --profile seed run --rm seed`.
+  seed:
+    image: ${JOBPILOT_IMAGE_PREFIX:-ghcr.io/jobpilot/jobpilot}/web:${JOBPILOT_TAG:-latest}
+    build:
+      context: .
+      target: web
+    command: ["pnpm", "db:seed"]
+    environment: *app-env
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    profiles: ["seed"]
+    restart: "no"
+
+  web:
+    image: ${JOBPILOT_IMAGE_PREFIX:-ghcr.io/jobpilot/jobpilot}/web:${JOBPILOT_TAG:-latest}
+    build:
+      context: .
+      target: web
+    environment: *app-env
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  worker:
+    image: ${JOBPILOT_IMAGE_PREFIX:-ghcr.io/jobpilot/jobpilot}/worker:${JOBPILOT_TAG:-latest}
+    build:
+      context: .
+      target: worker
+    environment: *app-env
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
 
 volumes:
   jobpilot-pgdata:

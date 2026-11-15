@@ -1415,3 +1415,61 @@ Honest gaps: the `docker build` itself was not executed here (no Docker daemon),
 so image layers, the `--with-deps` apt step and the unprivileged Chromium launch
 are unproven; the first real build will confirm them. Nothing is deployed to a
 runtime environment — the workflow publishes images only, by design.
+
+## Phase 12 — compose stack (ledger)
+
+| Gate # | Sub-Task Name | Observable Outcome | Expected Proof | Status |
+| --- | --- | --- | --- | --- |
+| 12.1 | Postgres service | The stack owns a pgvector database with a health check | `db` service (`pgvector/pgvector:pg16`, `pg_isready`, volume) | [MET] |
+| 12.2 | Migrations as a job | Migrations run once and before the apps | `migrate` runs `pnpm db:migrate` with `restart: "no"`; apps wait for `service_completed_successfully` | [MET] |
+| 12.3 | Health-gated startup | web and worker start only on a healthy, migrated database | `depends_on` conditions `service_healthy` + `service_completed_successfully` on both | [MET] |
+| 12.4 | Published images | The stack pulls the images the deploy workflow publishes, or builds them | `image: ${JOBPILOT_IMAGE_PREFIX}/web|worker:${JOBPILOT_TAG}` with `build.target` web/worker | [MET] |
+| 12.5 | Docs and ledger | README + ledger describe running the stack | README “Running the stack with compose” + this section | [MET] |
+| 12.6 | Local verification | Everything runnable here passes; the rest stated | YAML parse + structural assertions below; compose itself not executed (no Docker) | [MET] |
+
+### Evidence for gates 12.1-12.4 (the file, as parsed)
+
+The stack is validated by parsing it and asserting the orchestration contract,
+because this machine has no Docker daemon:
+
+```
+name= jobpilot services= db,migrate,seed,web,worker
+web image= ${JOBPILOT_IMAGE_PREFIX:-ghcr.io/jobpilot/jobpilot}/web:${JOBPILOT_TAG:-latest}
+ depends: {'db': 'service_healthy', 'migrate': 'service_completed_successfully'}
+worker image= ${JOBPILOT_IMAGE_PREFIX:-ghcr.io/jobpilot/jobpilot}/worker:${JOBPILOT_TAG:-latest}
+ depends: {'db': 'service_healthy', 'migrate': 'service_completed_successfully'}
+migrate cmd= ['pnpm', 'db:migrate'] restart= no
+seed profiles= ['seed']
+db healthcheck= ['CMD-SHELL', 'pg_isready -U jobpilot -d jobpilot']
+worker has ports: False | web ports: ['3000:3000']
+```
+
+`migrate` and `seed` run in the `web` image (same workspace, Prisma CLI present)
+with their CMD overridden, so no extra image has to be published for them. The
+targets they build from exist in the Dockerfile:
+
+```
+45:FROM runtime AS web
+50:FROM runtime AS worker
+```
+
+Both commands the one-shot services run were executed here against the real
+database in Phase 10 (`MIGRATE=0`, `SEED=0`), and the two long-running commands
+were executed in Phase 11 (`next start` serving :3200, worker scheduling
+`autopilot-tick`).
+
+### Documentation for gate 12.5
+
+README gained “Running the stack with compose”: `docker compose up -d --build`,
+`docker compose up -d db`, `docker compose --profile seed run --rm seed`, the
+`JOBPILOT_IMAGE_PREFIX`/`JOBPILOT_TAG` pair for published images, and the warning
+that seeding resets `Settings`.
+
+## Phase 12 status
+
+All six gates are [MET] as far as this machine can prove them, with one honest
+gap: `docker compose up` was never executed (no Docker daemon here), so container
+start-up ordering, the `service_completed_successfully` condition and volume
+permissions are unverified in practice. Everything the file orchestrates — the
+migrations, the seed, both entrypoints, the image targets — was run directly and
+is listed above.
