@@ -1,0 +1,32 @@
+# Dependencies and build output are produced inside the image.
+node_modules
+**/node_modules
+.next
+**/.next
+.turbo
+**/.turbo
+dist
+**/dist
+coverage
+*.tsbuildinfo
+
+# Local database, local Postgres install and generated artifacts.
+.pgdata
+.pg-install
+.tmp
+mock-ats.log
+
+# Secrets never enter a build context.
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+
+# Repository and CI metadata.
+.git
+.github
+.cloud-attachments
+playwright-report
+test-results
+.DS_Store

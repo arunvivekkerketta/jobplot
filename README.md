@@ -84,6 +84,31 @@ and `pnpm test`; the e2e job adds Chromium and runs `pnpm e2e` against its own
 `<database>_e2e`. Playwright traces are uploaded when the e2e job fails. No LLM key
 is configured in CI, so the suites exercise the deterministic fallbacks.
 
+## Containers and deploys
+
+`Dockerfile` builds one workspace and exposes two targets that share the same
+runtime — the web app and the queue worker import the same packages, and both need
+Chromium for the Auto-Pilot executor:
+
+```bash
+docker build --target web    -t jobpilot-web    .
+docker build --target worker -t jobpilot-worker .
+
+docker run --rm -p 3000:3000 \
+  -e DATABASE_URL=… -e APP_ENCRYPTION_KEY=… -e NEXTAUTH_SECRET=… \
+  jobpilot-web
+docker run --rm -e DATABASE_URL=… -e APP_ENCRYPTION_KEY=… jobpilot-worker
+```
+
+Migrations are not run on boot; apply them with the same image:
+`docker run --rm -e DATABASE_URL=… jobpilot-web pnpm db:migrate`.
+
+`.github/workflows/deploy.yml` publishes `ghcr.io/<owner>/<repo>/web` and
+`…/worker` (long-sha and `latest` tags, GitHub Actions layer cache) only after the
+CI workflow on `main` succeeds, or on a manual `workflow_dispatch`. It needs no
+secrets: it authenticates to GHCR with the job's `GITHUB_TOKEN` and the workflow's
+`packages: write` permission.
+
 ## Layout
 
 ```

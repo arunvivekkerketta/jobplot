@@ -1307,3 +1307,111 @@ Not verified: an actual GitHub Actions run. The workflow file is parsed and ever
 command it runs was executed successfully here, but the runner image, service
 container networking and Playwright browser install can only be proven by pushing
 the branch.
+
+## Phase 11 — production images and gated deploy (ledger)
+
+| Gate # | Sub-Task Name | Observable Outcome | Expected Proof | Status |
+| --- | --- | --- | --- | --- |
+| 11.1 | Production build | The web app builds a server that runs without dev tooling | `pnpm --filter @jobpilot/web build` exit 0; `next start` answers `/login` 200 and `/` 307 | [MET] |
+| 11.2 | Web image | One image runs the built app as an unprivileged user | `Dockerfile` target `web`: build stage → runtime stage, `USER jobpilot`, `HEALTHCHECK`, `pnpm --filter @jobpilot/web start` | [MET] |
+| 11.3 | Worker image | The worker image runs the queue worker with a usable browser | Target `worker` shares the same runtime; `playwright install --with-deps chromium` at `PLAYWRIGHT_BROWSERS_PATH=/ms-playwright`; `pnpm --filter @jobpilot/worker start` proven here | [MET] |
+| 11.4 | CI-gated publish | Images publish only after CI succeeds | `deploy.yml` on `workflow_run: [CI]` (main) with a `conclusion == 'success'` guard; buildx push to GHCR for both targets | [MET] |
+| 11.5 | Docs and ledger | README documents build/run/migrate/publish, ledger has output | README “Containers and deploys” + this section | [MET] |
+| 11.6 | Local verification | Everything runnable here passes; the unbuildable part is stated | build/start/worker/YAML evidence below; no Docker daemon on this machine | [MET] |
+
+### Evidence for gates 11.1-11.3 (build, both runtimes)
+
+The image reuses the workspace build instead of a bespoke production server:
+
+```dockerfile
+FROM base AS build
+COPY . .
+RUN pnpm install --frozen-lockfile && pnpm db:generate
+RUN pnpm --filter @jobpilot/web build
+
+FROM base AS runtime
+COPY --from=build /app /app
+RUN pnpm --filter @jobpilot/autopilot exec playwright install --with-deps chromium \
+    && rm -rf /var/lib/apt/lists/*
+RUN useradd --create-home --uid 10001 jobpilot && chown -R jobpilot:jobpilot /ms-playwright
+USER jobpilot
+
+FROM runtime AS web     … CMD ["pnpm","--filter","@jobpilot/web","start"]
+FROM runtime AS worker  … CMD ["pnpm","--filter","@jobpilot/worker","start"]
+```
+
+Chromium is installed for both targets because the Auto-Pilot executor opens a
+browser from the API route (on-demand run) as well as from the worker (scheduled
+tick). `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` keeps `pnpm install` from fetching a
+browser into the build layer.
+
+```
+$ pnpm --filter @jobpilot/web build
+BUILD=0
+ ✓ Compiled successfully in 6.4s
+Route (app)                                 Size  First Load JS
+├ ƒ /api/autopilot                         163 B         102 kB
+…
+
+$ pnpm exec next start -p 3200
+ ✓ Ready in 726ms
+HTTP=200   (/login)
+root=307   (/ redirects to auth)
+
+$ pnpm --filter @jobpilot/worker start
+[worker] pg-boss started
+[worker] queue system-heartbeat scheduled every 10 minutes
+[worker] autopilot-tick scheduled (*/15 * * * *)
+```
+
+### Evidence for gate 11.4 (publish only after green CI)
+
+```yaml
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  publish:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    strategy: { matrix: { include: [{name: web, target: web}, {name: worker, target: worker}] } }
+```
+
+Both images are built with `docker/build-push-action` and pushed to
+`ghcr.io/<repo>/<name>` tagged with the long commit SHA (plus `latest`), using the
+job's `GITHUB_TOKEN` and `packages: write`. The job prints the digest to the run
+summary.
+
+Parsed with a real YAML parser:
+
+```
+parsed ok name=Deploy triggers=workflow_run,workflow_dispatch jobs=publish matrix=web,worker perm=contents,packages
+```
+
+### Verification for the phase
+
+```
+BUILD_EXIT=0       pnpm --filter @jobpilot/web build
+NEXT_START=200     /login on the production server (:3200), / = 307
+WORKER_EXIT=ok     pg-boss started, autopilot-tick scheduled (*/15 * * * *)
+YAML_EXIT=0        deploy.yml and ci.yml parsed
+DOCKER_IMAGE_BUILD not run — no Docker daemon on this machine (`docker: command not found`)
+```
+
+## Phase 11 status
+
+All six gates are [MET] for everything this machine can execute. The images are
+built from one workspace build and share a runtime stage; each target differs only
+in CMD, so the web and worker images are interchangeable apart from their entry
+point. The deploy workflow cannot publish unless the CI workflow that verified the
+same commit finished successfully.
+
+Honest gaps: the `docker build` itself was not executed here (no Docker daemon),
+so image layers, the `--with-deps` apt step and the unprivileged Chromium launch
+are unproven; the first real build will confirm them. Nothing is deployed to a
+runtime environment — the workflow publishes images only, by design.
