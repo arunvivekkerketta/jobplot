@@ -35,7 +35,13 @@ export function loadRootEnv() {
   return out;
 }
 
-/** `postgresql://…/jobpilot` -> `postgresql://…/jobpilot_e2e`. */
+/**
+ * `postgresql://…/jobpilot` -> `postgresql://…/jobpilot_e2e`.
+ *
+ * Idempotent on purpose: Playwright hands the already-derived URL to the
+ * bootstrap script through the webServer environment, so deriving twice must not
+ * produce `jobpilot_e2e_e2e` and leave the database the app actually uses alone.
+ */
 export function e2eDatabaseUrl(baseUrl) {
   const override = process.env.E2E_DATABASE_URL;
   if (override) return override;
@@ -44,6 +50,7 @@ export function e2eDatabaseUrl(baseUrl) {
   if (!/^[A-Za-z0-9_]+$/.test(name)) {
     throw new Error(`Cannot derive an e2e database name from "${url.pathname}"`);
   }
+  if (name.endsWith("_e2e")) return url.toString();
   url.pathname = `/${name}_e2e`;
   return url.toString();
 }

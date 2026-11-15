@@ -1473,3 +1473,71 @@ start-up ordering, the `service_completed_successfully` condition and volume
 permissions are unverified in practice. Everything the file orchestrates — the
 migrations, the seed, both entrypoints, the image targets — was run directly and
 is listed above.
+
+## Verification pass over Phases 8-12
+
+A full re-check of the delivered work found three real defects. Two were in
+shipped code, one was in the isolation added in Phase 9; all three are fixed.
+
+### Defect 1 — the e2e database was only fresh on its first run (Phase 9)
+
+`e2eDatabaseUrl` appended `_e2e` unconditionally, but the Playwright webServer
+already receives the derived URL through its environment. The bootstrap therefore
+re-created `jobpilot_e2e_e2e` and migrated that, while the app kept writing to the
+accumulating `jobpilot_e2e` — so the daily submission cap came back after the
+first run and gate 7.1-7.5 failed with `Daily cap reached (12/10)` on a database
+that looked fresh. Evidence:
+
+```
+$ psql -c "select datname from pg_database where datname like 'jobpilot%'"
+jobpilot          (74 applications — developer data, never touched)
+jobpilot_e2e      (23 applications, accumulated over runs — the cap blocker)
+jobpilot_e2e_e2e  (0 applications — the database that was actually reset)
+```
+
+The derivation is now idempotent (`jobpilot` -> `jobpilot_e2e` -> `jobpilot_e2e`),
+the stray database was dropped, and a run proves the reset reaches the real target:
+
+```
+before=23   1 passed    after=0   (a single gate 8.6 run reset it)
+apps_after_run1=5   apps_after_run2=5   dev_apps=74
+```
+
+Two consecutive full suites now pass against a database that starts empty each
+time, which is what Phase 9 claimed and did not yet deliver.
+
+### Defect 2 — the publish path could contain uppercase (Phase 11)
+
+`images: ghcr.io/${{ github.repository }}/…` keeps the repository's capitalisation,
+and container registry paths must be lowercase, so a repository such as `Owner/Repo`
+would fail the push. The workflow now folds the name first:
+
+```yaml
+- name: Resolve image prefix
+  id: image
+  run: echo "prefix=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+```
+
+`latest` is also only emitted for `workflow_run` or `refs/heads/main`, so a manual
+dispatch from a branch cannot move `latest` backwards.
+
+### Defect 3 — the non-root user could not write Next's image cache (Phase 11)
+
+`next start` writes optimised images under `.next/cache`, but only `/ms-playwright`
+was chowned; the app directory stayed root-owned. The chown now covers both:
+`chown -R jobpilot:jobpilot /ms-playwright /app`.
+
+### Confirmed as intended
+
+```
+Build without .env / without DATABASE_URL  BUILD=0  ✓ Compiled successfully in 1818ms
+  (the Docker build stage has neither, so the image build is safe)
+Playwright versions                       playwright@1.63.0 == @playwright/test@1.63.0
+  (one browser install serves both the test runner and the Auto-Pilot runtime)
+Lint / typecheck / unit tests             0 / 0 / 0 (186 tests)
+Full e2e, twice in a row                  29 passed (3.5m), 29 passed (3.7m) — 0 skipped
+Developer database after both runs        74 applications, unchanged
+```
+
+Still unverified for the same reason as before: no Docker daemon here, so
+`docker build`/`docker compose up` and the GHCR push itself have never executed.

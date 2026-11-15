@@ -37,8 +37,10 @@ COPY --from=build /app /app
 # playwright owns the binary, so its scope runs the CLI.
 RUN pnpm --filter @jobpilot/autopilot exec playwright install --with-deps chromium \
     && rm -rf /var/lib/apt/lists/*
+# /app is chowned as well: `next start` writes its image cache under .next and
+# already runs with the app's build output owned by the build user otherwise.
 RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin jobpilot \
-    && chown -R jobpilot:jobpilot /ms-playwright
+    && chown -R jobpilot:jobpilot /ms-playwright /app
 USER jobpilot
 EXPOSE 3000
 
