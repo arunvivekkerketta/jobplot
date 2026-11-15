@@ -553,3 +553,183 @@ export async function saveProjectPlans(
   });
   return result.count;
 }
+
+export interface SaveResumeVersionInput {
+  profileId: string;
+  jobId?: string | null;
+  tailoredJson: unknown;
+  validationReport: unknown;
+  keywordReport: unknown;
+}
+
+/**
+ * Stores a tailored version with its claim-check and keyword reports, plus the
+ * `resume.tailor` audit row in the same transaction (I8, gate 6.3).
+ */
+export async function saveResumeVersion(
+  input: SaveResumeVersionInput,
+): Promise<{ id: string; approvedAt: Date | null }> {
+  return prisma.$transaction(async (tx) => {
+    const version = await tx.resumeVersion.create({
+      data: {
+        profileId: input.profileId,
+        jobId: input.jobId ?? null,
+        tailoredJson: input.tailoredJson as Prisma.InputJsonValue,
+        validationReport: input.validationReport as Prisma.InputJsonValue,
+        keywordReport: input.keywordReport as Prisma.InputJsonValue,
+      },
+      select: { id: true, approvedAt: true },
+    });
+
+    const keywordReport = input.keywordReport as { finalCoverage?: number } | null;
+    await tx.auditLog.create({
+      data: {
+        actor: "SYSTEM",
+        action: "resume.tailor",
+        entityType: "ResumeVersion",
+        entityId: version.id,
+        payload: redactDeep({
+          jobId: input.jobId ?? null,
+          finalCoverage: keywordReport?.finalCoverage ?? null,
+        }) as object,
+      },
+    });
+
+    return version;
+  }, TX_OPTIONS);
+}
+
+/** Attaches the rendered files; `pdfPath`/`docxPath` are download URLs. */
+export async function setResumeVersionArtifacts(
+  id: string,
+  artifacts: { pdfPath?: string | null; docxPath?: string | null },
+): Promise<void> {
+  await prisma.resumeVersion.update({
+    where: { id },
+    data: {
+      ...(artifacts.pdfPath !== undefined ? { pdfPath: artifacts.pdfPath } : {}),
+      ...(artifacts.docxPath !== undefined ? { docxPath: artifacts.docxPath } : {}),
+    },
+  });
+}
+
+/** Approval is explicit and audited; it is what the submit path checks (gate 6.4). */
+export async function approveResumeVersion(
+  id: string,
+): Promise<{ id: string; approvedAt: Date | null }> {
+  return prisma.$transaction(async (tx) => {
+    const version = await tx.resumeVersion.update({
+      where: { id },
+      data: { approvedAt: new Date() },
+      select: { id: true, approvedAt: true },
+    });
+    await tx.auditLog.create({
+      data: {
+        actor: "USER",
+        action: "resume.approve",
+        entityType: "ResumeVersion",
+        entityId: version.id,
+        payload: { approvedAt: version.approvedAt?.toISOString() ?? null },
+      },
+    });
+    return version;
+  }, TX_OPTIONS);
+}
+
+export async function listResumeVersions(profileId: string, take = 25) {
+  return prisma.resumeVersion.findMany({
+    where: { profileId },
+    orderBy: { id: "desc" },
+    take,
+  });
+}
+
+export async function findResumeVersion(id: string) {
+  return prisma.resumeVersion.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      profileId: true,
+      approvedAt: true,
+      jobId: true,
+      pdfPath: true,
+      docxPath: true,
+      keywordReport: true,
+    },
+  });
+}
+
+export interface AnswerInput {
+  userId: string;
+  key: string;
+  questionPattern?: string | null;
+  answer: string;
+  sensitive: boolean;
+}
+
+/** User-scoped Answer Bank write; the unique key makes editing an upsert (gate 6.5). */
+export async function upsertAnswer(
+  input: AnswerInput,
+): Promise<{ id: string; key: string }> {
+  return prisma.$transaction(async (tx) => {
+    const entry = await tx.answerBankEntry.upsert({
+      where: { userId_key: { userId: input.userId, key: input.key } },
+      update: {
+        answer: input.answer,
+        sensitive: input.sensitive,
+        ...(input.questionPattern !== undefined
+          ? { questionPattern: input.questionPattern }
+          : {}),
+      },
+      create: {
+        userId: input.userId,
+        key: input.key,
+        questionPattern: input.questionPattern ?? null,
+        answer: input.answer,
+        sensitive: input.sensitive,
+        source: "USER",
+      },
+      select: { id: true, key: true },
+    });
+    await tx.auditLog.create({
+      data: {
+        actor: "USER",
+        action: "answer.save",
+        entityType: "AnswerBankEntry",
+        entityId: entry.id,
+        // The answer text itself is never logged (I5/I7).
+        payload: { key: entry.key, sensitive: input.sensitive },
+      },
+    });
+    return entry;
+  }, TX_OPTIONS);
+}
+
+export async function listAnswers(userId: string) {
+  return prisma.answerBankEntry.findMany({
+    where: { userId },
+    orderBy: { key: "asc" },
+    select: { id: true, key: true, questionPattern: true, answer: true, sensitive: true },
+  });
+}
+
+export async function deleteAnswer(input: { userId: string; id: string }): Promise<boolean> {
+  const existing = await prisma.answerBankEntry.findFirst({
+    where: { id: input.id, userId: input.userId },
+    select: { id: true },
+  });
+  if (!existing) return false;
+  await prisma.$transaction(async (tx) => {
+    await tx.answerBankEntry.delete({ where: { id: existing.id } });
+    await tx.auditLog.create({
+      data: {
+        actor: "USER",
+        action: "answer.delete",
+        entityType: "AnswerBankEntry",
+        entityId: existing.id,
+        payload: {},
+      },
+    });
+  }, TX_OPTIONS);
+  return true;
+}

@@ -792,3 +792,148 @@ while proving them: `@jobpilot/llm` did not depend on `@jobpilot/core`, so the n
 explanation module could not resolve it types, and the db match suite relied on
 Prisma's 5s default while each case creates a user, a profile and postings, which
 timed out intermittently until the file raised its own budget.
+
+## Phase 6 — fact-only tailoring (ledger)
+
+| Gate # | Sub-Task Name | Observable Outcome | Expected Proof | Status |
+| --- | --- | --- | --- | --- |
+| 6.1 | Fact-only tailoring | A tailored document may only reorder and omit profile facts | `packages/render`/`packages/llm` tests prove every bullet is a profile bullet and invented claims are rejected | [MET] |
+| 6.2 | Keyword loop | Trimming never drops coverage below the floor | Render test plus stored `keywordReport` showing the same coverage with fewer bullets | [MET] |
+| 6.3 | Version persistence | A tailored version and its reports are stored with an audit row | db test and `ResumeVersion` rows with `resume.tailor` audits | [MET] |
+| 6.4 | Approval gate | An application cannot reference an unapproved version | e2e: 409 before approval, 201 after | [MET] |
+| 6.5 | Answer Bank CRUD | User-scoped create/update/delete with no answer text in audit | db test (cross-user refusal) and e2e CRUD | [MET] |
+| 6.6 | SAMPLE watermark | A mock offer is watermarked even when asked not to be | `packages/render/test/watermark.test.ts` | [MET] |
+| 6.7 | Tailor UI | `/tailor` runs a tailoring and shows the approval state | e2e assertions on `tailor-page`, `tailor-result`, `version-approved` | [MET] |
+| 6.8 | Auth and audit | Tailoring and answers are behind sign-in and audited | e2e 307 checks plus `resume.tailor`/`resume.approve`/`answer.save` audit rows | [MET] |
+
+### Evidence for gates 6.1-6.3 (deterministic and model tailoring)
+
+`packages/render/src/tailor.ts` exposes `tailorDocument(profile, jobDescription)`,
+which builds the document from the profile, ranks each role's bullets by how many
+of the posting's required keywords they carry, keeps the top `maxHighlightsPerRole`
+and then restores trimmed bullets until coverage is back at the floor. There is no
+code path that writes a bullet string, so a keyword the profile cannot attest to
+cannot appear.
+
+```ts
+function trimRoles(doc, required, maxPerRole) {
+  const roles = doc.roles.map((role) => {
+    const ranked = role.highlights
+      .map((text, index) => ({ text, index, score: hits(text, required) }))
+      .sort((a, b) => b.score - a.score || a.index - b.index);
+    const keep = ranked.slice(0, Math.max(1, maxPerRole)).sort((a, b) => a.index - b.index);
+    return { ...role, highlights: keep.map((entry) => entry.text) };
+  });
+  return { ...doc, roles };
+}
+```
+
+`packages/llm/src/tailor.ts` sends the model a closed list of allowed facts and
+`resumeDocumentSchema`, then runs `validateResumeDocument` on the reply; an
+invented employer or bullet throws `ClaimValidationError` and is never stored:
+
+```
+ ✓ test/tailor.test.ts (5 tests) 4ms
+   gate 6.1: an invented claim is rejected before it can be stored (I1)
+     ✓ throws ClaimValidationError for an employer the profile does not have
+     ✓ accepts a document that only restates the profile
+     ✓ rejects an invented bullet even when the employer is real
+```
+
+```
+$ pnpm --filter @jobpilot/render test
+ ✓ test/tailor.test.ts (6 tests) 4ms
+ ✓ test/watermark.test.ts (3 tests)
+ ✓ test/ats.test.ts (4 tests)
+ ✓ test/render.test.ts (9 tests)
+ Test Files  4 passed (4)
+      Tests  22 passed (22)
+```
+
+The keyword loop is observable in the stored report: the E2E tailoring of the
+imported profile trims bullets and still reports the original coverage.
+
+```
+ initial | final | trimmed |    source     | claims
+---------+-------+---------+---------------+--------
+    88.2 |  88.2 |       4 | deterministic |     71
+```
+
+71 claims were re-checked against the Fact Index for the tailored document, and
+the coverage the full document had is preserved while four bullets are dropped
+(`floor` defaults to the initial coverage, so restoring is what makes trimming and
+coverage compatible rather than a trade-off).
+
+### Evidence for gates 6.4-6.5 (approval gate and Answer Bank)
+
+`apps/web/src/app/api/applications/route.ts` now accepts an optional
+`resumeVersionId` and refuses to proceed until it carries `approvedAt`:
+
+```
+$ pnpm --filter @jobpilot/web exec playwright test tests/e2e/phase6.spec.ts --reporter=line
+[1/2] tests\e2e\phase6.spec.ts:56:5 › gate 6.1-6.5: tailoring, the approval gate and the Answer Bank end to end
+[2/2] tests\e2e\phase6.spec.ts:167:5 › gate 6.8: tailoring and answers are behind the auth wall
+  2 passed (45.9s)
+```
+
+The spec asserts the order explicitly — the same request returns 409 before
+`POST /api/resume-versions/:id/approve` and 201 after it. Answer Bank writes are
+user-scoped upserts on `@@unique([userId, key])`, and the audit payload holds only
+the key and the sensitive flag:
+
+```
+     action     | count
+----------------+-------
+ answer.delete  |     3
+ answer.save    |     9
+ resume.approve |     3
+ resume.tailor  |     7
+
+ answers
+---------
+       3
+```
+
+```
+ versions | approved
+----------+----------
+        7 |        3
+```
+
+### Evidence for gates 6.6-6.8 (watermark, UI, auth)
+
+```
+$ pnpm --filter @jobpilot/render test
+ ✓ test/watermark.test.ts (3 tests)
+   gate 6.6: a mock offer is always watermarked (I6)
+     ✓ forces SAMPLE even when the caller asks for no watermark
+     ✓ does not watermark an ordinary resume
+     ✓ watermarks the PDF path too
+```
+
+The page assertions in the E2E spec cover signing in, choosing the posting,
+running a tailoring, seeing the claim count, downloading the PDF and finding the
+version already approved; `/answers` saves a sensitive answer, shows it, deletes
+it and waits for the row to disappear. Both APIs answer 307 to an unauthenticated
+client, so the UI is not the only guard.
+
+### Verification for the phase
+
+```
+TYPECHECK_EXIT=0   Tasks: 9 successful, 9 total
+LINT_EXIT=0        eslint . (0 errors)
+TEST_EXIT=0        Tasks: 6 successful, 6 total
+                   core 28 + render 22 + llm 29 + db 15 + apply 40 + sources 34
+E2E_EXIT=0         23 passed (1.9m)
+```
+
+## Phase 6 status
+
+All eight Phase 6 gates are [MET] with the evidence above. Two defects were fixed
+while proving them: the zod document schema used `.default([])`, which made the
+inferred input type optional and failed against `ZodType<ResumeDocument>`, and the
+deterministic tailoring path first stored a placeholder claim report with
+`checkedClaims: 0` — it now runs `validateResumeDocument` on the selected document
+so the audit records the real count. The local Postgres cluster also had to be
+restarted (it had crashed with `0xC0000142` and left a stale pidfile) before the db
+suite could connect.

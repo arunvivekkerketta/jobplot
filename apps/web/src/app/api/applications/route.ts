@@ -14,6 +14,8 @@ const createInput = z.object({
   jobId: z.string().min(1),
   resumeDocumentId: z.string().min(1),
   consent: z.literal(true),
+  /** Optional tailored version; when given it must already be approved. */
+  resumeVersionId: z.string().min(1).optional(),
 });
 
 export async function GET() {
@@ -97,13 +99,38 @@ export async function POST(req: Request) {
     );
   }
 
+  if (parsed.data.resumeVersionId) {
+    const profile = await prisma.profile.findUnique({
+      where: { userId },
+      select: { id: true },
+    });
+    const version = await prisma.resumeVersion.findUnique({
+      where: { id: parsed.data.resumeVersionId },
+      select: { id: true, profileId: true, approvedAt: true },
+    });
+    if (!version || !profile || version.profileId !== profile.id) {
+      return NextResponse.json({ error: "Unknown resume version" }, { status: 404 });
+    }
+    if (!version.approvedAt) {
+      return NextResponse.json(
+        { error: "Approve the tailored resume before applying (I3)" },
+        { status: 409 },
+      );
+    }
+  }
+
   const application = await createApplication({
     jobId: job.id,
     portal: job.source,
   });
 
   return NextResponse.json(
-    { id: application.id, status: application.status, resumeDocumentId: resume.id },
+    {
+      id: application.id,
+      status: application.status,
+      resumeDocumentId: resume.id,
+      resumeVersionId: parsed.data.resumeVersionId ?? null,
+    },
     { status: 201, headers: { "Cache-Control": "no-store" } },
   );
 }

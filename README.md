@@ -7,12 +7,13 @@ the audit trail), **Phase 2 — document rendering** (HTML, PDF and DOCX resumes
 that are claim-validated against the Fact Index, ATS lint, and the Documents
 UI/API), and **Phase 3 — job sources** (Greenhouse, Lever, Ashby and Adzuna
 adapters, paste-and-import, canonical-URL dedupe and the scheduled
-`fetch-sources` queue), and **Phase 4 — application executor** (canonical field
+`fetch-sources` queue), **Phase 4 — application executor** (canonical field
 mapping, the Answer Bank resolver, the stop gate and a browser runner proven
-against the mock ATS). Later phases add matching, tailoring and Auto-Pilot;
-against the mock ATS), and **Phase 5 — matching** (deterministic scores with a
-threshold gate, redacted explanations and pgvector embeddings). Later phases add
-tailoring and Auto-Pilot; the rules every phase must follow live in `CLAUDE.md`.
+against the mock ATS), **Phase 5 — matching** (deterministic scores with a
+threshold gate, redacted explanations and pgvector embeddings) and **Phase 6 —
+tailoring** (fact-only resume selection with a keyword loop, explicit approval
+before applying, and Answer Bank CRUD). Later phases add Auto-Pilot; the rules
+every phase must follow live in `CLAUDE.md`.
 
 ## Requirements
 
@@ -94,10 +95,12 @@ enforced in code, not just documented — see `CLAUDE.md` for the full protocol.
 
 ## Phase status
 
-All 15 Phase 1 gates, 9 Phase 2 gates, 18 Phase 3 gates, 10 Phase 4 gates and 10
-Phase 5 gates are met; the exact commands and outputs are recorded in
-[`docs/GATES.md`](docs/GATES.md). Job boards can be fetched in the background and
-postings pasted by hand, an application can be filled and submitted against the
-mock ATS behind the kill switch, caps, rate limit and consent checks with every
-browser action audited, and each posting is scored, explained and embedded so the
-threshold decides what is eligible to apply.
+All 15 Phase 1 gates, 9 Phase 2 gates, 18 Phase 3 gates, 10 Phase 4 gates, 10
+Phase 5 gates and 8 Phase 6 gates are met; the exact commands and outputs are
+recorded in [`docs/GATES.md`](docs/GATES.md). Job boards can be fetched in the
+background and postings pasted by hand, an application can be filled and
+submitted against the mock ATS behind the kill switch, caps, rate limit and
+consent checks with every browser action audited, each posting is scored,
+explained and embedded so the threshold decides what is eligible to apply, and a
+resume can be tailored to a posting from the profile's own facts, reviewed,
+approved by hand and only then attached to an application.

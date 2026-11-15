@@ -30,6 +30,12 @@ export default function RootLayout({
                 <Link href="/matches" className="hover:text-blue-700">
                   Matches
                 </Link>
+                <Link href="/tailor" className="hover:text-blue-700">
+                  Tailor
+                </Link>
+                <Link href="/answers" className="hover:text-blue-700">
+                  Answers
+                </Link>
                 <Link href="/audit" className="hover:text-blue-700">Audit</Link>
                 <Link href="/settings" className="hover:text-blue-700">Settings</Link>
               </nav>

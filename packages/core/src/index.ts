@@ -3,6 +3,7 @@ export * from "./profile/aliases.js";
 export * from "./profile/schema.js";
 export * from "./profile/factIndex.js";
 export * from "./resume/document.js";
+export * from "./resume/schema.js";
 export * from "./guardrails/claimValidator.js";
 export * from "./matching/types.js";
 export * from "./matching/score.js";
