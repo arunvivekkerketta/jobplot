@@ -153,20 +153,9 @@ test("gate 8.1-8.4: the scheduled tick submits for opted-in users only", async (
   expect(await submissions(page)).toHaveLength(0);
   await page.request.put("/api/settings", { data: { killSwitch: false } });
 
-  // The daily cap is a real budget shared by the earlier specs in this suite; on
-  // a database where it is already spent the scheduled submission cannot happen,
-  // so the submit leg is skipped rather than asserted against a saturated cap.
-  const capacity = (await (await page.request.get("/api/autopilot")).json()) as {
-    submissionsToday: number;
-    dailyCap: number;
-  };
-  test.skip(
-    capacity.submissionsToday >= capacity.dailyCap,
-    `daily cap already spent by earlier specs (${capacity.submissionsToday}/${capacity.dailyCap})`,
-  );
-
-  // The stop gate spaces actions on one host by 30s, and the earlier specs in
-  // this suite just submitted there; a scheduled tick has to wait like any run.
+  // The stop gate spaces actions on one host by 30s. Earlier specs in this run
+  // submitted on this host minutes ago at most, and a scheduled tick obeys the
+  // same stop gate as the Run button, so the tick waits it out.
   await page.waitForTimeout(31_000);
 
   // Gate 8.3: the tick runs the same service the on-demand button does.

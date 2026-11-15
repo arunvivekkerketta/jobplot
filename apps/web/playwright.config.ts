@@ -1,20 +1,21 @@
 import { defineConfig } from "@playwright/test";
-import fs from "node:fs";
-import path from "node:path";
 
-function loadRootEnv(): Record<string, string> {
-  const envPath = path.resolve(__dirname, "../../.env");
-  const out: Record<string, string> = {};
-  if (fs.existsSync(envPath)) {
-    for (const line of fs.readFileSync(envPath, "utf8").split(/\r?\n/)) {
-      const m = /^([A-Z0-9_]+)=(.*)$/.exec(line.trim());
-      if (m && m[1] && !out[m[1]]) out[m[1]] = m[2] ?? "";
-    }
-  }
-  return out;
-}
+import { e2eDatabaseUrl, loadRootEnv, redact } from "./scripts/e2e-env.mjs";
 
-const env = loadRootEnv();
+const env = loadRootEnv() as Record<string, string>;
+
+const databaseUrl =
+  process.env.DATABASE_URL ?? env.DATABASE_URL ?? "postgresql://jobpilot:jobpilot@localhost:5432/jobpilot";
+
+// The suite never touches the developer database: it owns `<db>_e2e`, which
+// scripts/e2e-db.mjs drops and re-seeds before the server starts. That keeps the
+// daily submission cap (and every other counter) at zero for each run.
+const e2eDatabase = e2eDatabaseUrl(databaseUrl);
+const PORT = 3100;
+const BASE_URL = `http://localhost:${PORT}`;
+const MOCK_ATS_URL = process.env.MOCK_ATS_URL ?? "http://localhost:4600";
+
+console.log(`[e2e] database ${redact(e2eDatabase)} on ${BASE_URL}`);
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -26,31 +27,35 @@ export default defineConfig({
   workers: 1,
   fullyParallel: false,
   use: {
-    baseURL: "http://localhost:3000",
+    baseURL: BASE_URL,
     trace: "retain-on-failure",
   },
-  webServer: {
-    command: "pnpm dev",
-    port: 3000,
-    reuseExistingServer: true,
-    timeout: 120_000,
-    env: {
-      ...env,
-      DATABASE_URL:
-        process.env.DATABASE_URL ??
-        env.DATABASE_URL ??
-        "postgresql://jobpilot:jobpilot@localhost:5432/jobpilot",
-      NEXTAUTH_URL: "http://localhost:3000",
-      AUTH_SECRET:
-        process.env.AUTH_SECRET ??
-        env.NEXTAUTH_SECRET ??
-        "e2e-secret-not-for-production",
-      NEXTAUTH_SECRET:
-        process.env.NEXTAUTH_SECRET ??
-        env.NEXTAUTH_SECRET ??
-        "e2e-secret-not-for-production",
-      APP_ENCRYPTION_KEY:
-        env.APP_ENCRYPTION_KEY ?? Buffer.alloc(32, 7).toString("base64"),
+  webServer: [
+    {
+      // The mock ATS is shared by several specs; reuse it when it is already up.
+      command: "pnpm --filter @jobpilot/mock-ats start",
+      url: MOCK_ATS_URL,
+      reuseExistingServer: true,
+      timeout: 60_000,
     },
-  },
+    {
+      // Reset the e2e database, then serve the app on its own port so a running
+      // `pnpm dev` (developer database, :3000) is never involved.
+      command: "node scripts/e2e-db.mjs && pnpm exec next dev -p 3100",
+      url: BASE_URL,
+      reuseExistingServer: false,
+      timeout: 240_000,
+      env: {
+        ...env,
+        DATABASE_URL: e2eDatabase,
+        NEXTAUTH_URL: BASE_URL,
+        AUTH_URL: BASE_URL,
+        NEXTAUTH_SECRET:
+          process.env.NEXTAUTH_SECRET ?? env.NEXTAUTH_SECRET ?? "e2e-secret-not-for-production",
+        AUTH_SECRET: process.env.AUTH_SECRET ?? env.NEXTAUTH_SECRET ?? "e2e-secret-not-for-production",
+        APP_ENCRYPTION_KEY: env.APP_ENCRYPTION_KEY ?? Buffer.alloc(32, 7).toString("base64"),
+        MOCK_ATS_URL,
+      },
+    },
+  ],
 });

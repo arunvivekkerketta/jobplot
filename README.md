@@ -63,14 +63,19 @@ machine keeps a cluster in `.pgdata` (gitignored, port 55432) started with:
 | `pnpm lint` | ESLint across the workspace |
 | `pnpm typecheck` | `tsc --noEmit` in every package |
 | `pnpm test` | vitest unit tests (core, llm, db, render, sources) |
-| `pnpm e2e` | Playwright against a dev server on :3000 |
+| `pnpm e2e` | Playwright against its own database on :3100 |
 | `pnpm db:migrate` | Apply committed Prisma migrations |
 | `pnpm db:seed` | Upsert the admin user and default Settings |
 | `pnpm db:generate` | Regenerate the Prisma client |
 | `pnpm db:studio` | Prisma Studio |
 
-`pnpm e2e` expects a migrated, seeded database; the Playwright config reuses an
-already-running server or starts `next dev` itself.
+`pnpm e2e` never touches your development database. Playwright starts `next dev` on
+:3100 against `<your database>_e2e`, and `apps/web/scripts/e2e-db.mjs` drops,
+migrates and re-seeds that database before every run — so the daily submission cap
+and every other counter start at zero and the suite is repeatable. Set
+`E2E_DATABASE_URL` to point the suite at a different database, or `MOCK_ATS_URL`
+if the mock ATS is not on :4600. The mock ATS is started (or reused) by the same
+config.
 
 ## Layout
 

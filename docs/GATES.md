@@ -1144,3 +1144,80 @@ the local database had already spent the 25-per-day cap when the last runs happe
 the `DAILY_CAP` refusal in that state instead of failing). `next build` for
 production was not run; the cron was verified by the worker log and the
 `pgboss.schedule` row, not by waiting 15 minutes for a real tick.
+
+## Phase 9 — isolated e2e database (ledger)
+
+| Gate # | Sub-Task Name | Observable Outcome | Expected Proof | Status |
+| --- | --- | --- | --- | --- |
+| 9.1 | Isolated target | The suite never reads or writes the developer database | Playwright derives `<db>_e2e` and hands it to the server it launches; dev `Application` count unchanged after a run | [MET] |
+| 9.2 | Reset before every run | Each run starts from a freshly migrated, seeded database | `apps/web/scripts/e2e-db.mjs` drops, migrates and seeds; suite reaches the submit gates with an empty budget | [MET] |
+| 9.3 | No port collisions | A running `pnpm dev` is never reused | e2e app serves :3100 with its own env; mock ATS is started or explicitly reused | [MET] |
+| 9.4 | Specs unconditional | The two budget guards are gone and every gate runs | `pnpm e2e` reports 29 passed, 0 skipped | [MET] |
+| 9.5 | Docs and ledger | README explains the isolated database, ledger has real output | docs diff + verify run below | [MET] |
+
+### Evidence for gates 9.1-9.3 (its own database, reset, own port)
+
+The config derives the target instead of taking `DATABASE_URL` as-is, and the
+webServer command resets that target before Next binds a port:
+
+```ts
+const e2eDatabase = e2eDatabaseUrl(databaseUrl);   // …/jobpilot -> …/jobpilot_e2e
+webServer: [
+  { command: "pnpm --filter @jobpilot/mock-ats start", url: MOCK_ATS_URL, reuseExistingServer: true },
+  {
+    command: "node scripts/e2e-db.mjs && pnpm exec next dev -p 3100",
+    url: "http://localhost:3100",
+    reuseExistingServer: false,
+    env: { ...env, DATABASE_URL: e2eDatabase, NEXTAUTH_URL: "http://localhost:3100" },
+  },
+]
+```
+
+Bootstrap output, run on its own:
+
+```
+[e2e-db] recreated database jobpilot_e2e
+[e2e-db] migrating … Datasource "db": PostgreSQL database "jobpilot_e2e", schema "public" at "localhost:55432"
+                     Applying migration `000000000000_init`
+                     Applying migration `20261113233000_match_score_unique`
+                     Database reset successful … ok
+[e2e-db] seeding … ok
+[e2e-db] ready: postgresql://jobpilot:***@localhost:55432/jobpilot_e2e
+```
+
+Isolation checked against the live server after a full suite run — the developer
+database was not touched, the e2e database holds only that run's rows:
+
+```
+dev  "Application" count: 74   (unchanged)
+e2e  "Application" count: 5
+e2e  "Job" count:         10
+```
+
+### Evidence for gate 9.4 (no skipped gates left)
+
+Both budget guards were deleted from the specs, so the unattended-submission and
+scheduled-tick gates always execute:
+
+```
+$ pnpm e2e
+[e2e] database postgresql://jobpilot:***@localhost:55432/jobpilot_e2e on http://localhost:3100
+  29 passed (3.0m)
+```
+
+### Verification for the phase
+
+```
+LINT_EXIT=0        eslint . (0 errors, 0 warnings)
+TYPECHECK_EXIT=0   Tasks: 10 successful, 10 total
+TEST_EXIT=0        186 unit tests (autopilot 6, core 28, llm 29, render 22, sources 34, apply 52, db 15)
+E2E_EXIT=0         29 passed, 0 skipped (3.0m), repeated twice
+```
+
+## Phase 9 status
+
+All five gates are [MET]. `pnpm e2e` now owns a database: it is dropped and
+re-created from the committed migrations, seeded with the admin user and default
+Settings, and the app runs on :3100 with that URL, so a developer `pnpm dev` on
+:3000 keeps its own data and the run repeats identically any number of times in
+a day. `E2E_DATABASE_URL` still overrides the derived name for CI.

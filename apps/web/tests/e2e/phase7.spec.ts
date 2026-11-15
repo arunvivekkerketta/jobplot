@@ -108,7 +108,7 @@ test("gate 7.1-7.5: Auto-Pilot submits unattended behind portals, caps and audit
   // The threshold stays a user setting: these postings score 61, so 50 makes them
   // eligible while every other gate below is still exercised.
   const off = await page.request.put("/api/settings", {
-    data: { allowSubmit: false, killSwitch: false, dailyCap: 25, matchThreshold: 50 },
+    data: { allowSubmit: false, killSwitch: false, dailyCap: 10, matchThreshold: 50 },
   });
   expect(off.status()).toBe(200);
   const refused = await page.request.post("/api/autopilot", {
@@ -117,7 +117,7 @@ test("gate 7.1-7.5: Auto-Pilot submits unattended behind portals, caps and audit
   expect(refused.status()).toBe(409);
 
   const on = await page.request.put("/api/settings", {
-    data: { allowSubmit: true, killSwitch: false, dailyCap: 25, matchThreshold: 50 },
+    data: { allowSubmit: true, killSwitch: false, dailyCap: 10, matchThreshold: 50 },
   });
   expect(on.status()).toBe(200);
   const unlocked = await page.request.post("/api/autopilot", {
@@ -145,15 +145,6 @@ test("gate 7.1-7.5: Auto-Pilot submits unattended behind portals, caps and audit
   expect(coverLetter.status()).toBe(201);
   await page.request.post(`${MOCK}/__reset`);
 
-  // The daily cap is a real budget shared by every earlier spec in this suite.
-  // When it is already spent, the run is asserted to refuse on the cap instead
-  // of submitting, and the remaining submission assertions are skipped.
-  const capacity = (await (await page.request.get("/api/autopilot")).json()) as {
-    submissionsToday: number;
-    dailyCap: number;
-  };
-  const saturated = capacity.submissionsToday >= capacity.dailyCap;
-
   // Gates 7.3/7.4: one unattended submission, with no click anywhere.
   const run = await page.request.post("/api/autopilot", {
     data: { action: "run", jobIds: [jobA], limit: 1 },
@@ -166,12 +157,6 @@ test("gate 7.1-7.5: Auto-Pilot submits unattended behind portals, caps and audit
     stopReason: string | null;
     skipped: Array<{ reason: string }>;
   };
-  if (saturated) {
-    expect(runBody.queued, JSON.stringify(runBody)).toBe(0);
-    expect(runBody.skipped.map((entry) => entry.reason)).toContain("DAILY_CAP");
-    test.skip(true, `daily cap already spent (${capacity.submissionsToday}/${capacity.dailyCap})`);
-  }
-
   expect(runBody.queued, JSON.stringify(runBody)).toBe(1);
   expect(runBody.submitted).toBe(1);
   expect(runBody.paused).toBe(0);
