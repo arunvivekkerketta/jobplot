@@ -1,0 +1,25 @@
+{
+  "name": "@jobpilot/autopilot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@jobpilot/apply": "workspace:*",
+    "@jobpilot/core": "workspace:*",
+    "@jobpilot/db": "workspace:*",
+    "playwright": "1.63.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

@@ -1,4 +1,4 @@
-import { loadAutopilotStatus } from "@/lib/autopilot";
+import { loadAutopilotStatus } from "@jobpilot/autopilot";
 import { requireUser } from "@/lib/session";
 import AutopilotPanel from "./AutopilotPanel";
 

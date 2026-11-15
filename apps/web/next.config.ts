@@ -22,6 +22,7 @@ const nextConfig: NextConfig = {
     "@jobpilot/llm",
     "@jobpilot/render",
     "@jobpilot/sources",
+    "@jobpilot/autopilot",
   ],
   // Argon2 ships a prebuilt .node binary; webpack cannot parse it.
   // Playwright drives a real browser from the Auto-Pilot route, so it stays a

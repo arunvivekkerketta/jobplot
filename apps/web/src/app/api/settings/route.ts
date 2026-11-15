@@ -16,6 +16,8 @@ export async function GET() {
 }
 
 const putSchema = z.object({
+  // AUTOPILOT is what makes the scheduled worker tick pick this user up (8.2).
+  mode: z.enum(["COPILOT", "AUTOPILOT"]).optional(),
   dailyCap: z.number().int().min(1).max(25).optional(),
   matchThreshold: z.number().int().min(0).max(100).optional(),
   killSwitch: z.boolean().optional(),

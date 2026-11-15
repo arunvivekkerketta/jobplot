@@ -1,6 +1,6 @@
 "use client";
 
-import type { AutopilotStatus } from "@/lib/autopilot";
+import type { AutopilotStatus } from "@jobpilot/autopilot";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 

@@ -53,6 +53,9 @@ importers:
       '@jobpilot/apply':
         specifier: workspace:*
         version: link:../../packages/apply
+      '@jobpilot/autopilot':
+        specifier: workspace:*
+        version: link:../../packages/autopilot
       '@jobpilot/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -74,9 +77,6 @@ importers:
       next-auth:
         specifier: 5.0.0-beta.29
         version: 5.0.0-beta.29(next@15.5.4(@playwright/test@1.63.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react@19.3.0)
-      playwright:
-        specifier: 1.63.0
-        version: 1.63.0
       react:
         specifier: ^19.1.1
         version: 19.3.0
@@ -120,6 +120,9 @@ importers:
 
   apps/worker:
     dependencies:
+      '@jobpilot/autopilot':
+        specifier: workspace:*
+        version: link:../../packages/autopilot
       '@jobpilot/db':
         specifier: workspace:*
         version: link:../../packages/db
@@ -148,6 +151,31 @@ importers:
       '@jobpilot/llm':
         specifier: workspace:*
         version: link:../llm
+    devDependencies:
+      '@types/node':
+        specifier: ^24.5.2
+        version: 24.19.0
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.7(@types/node@24.19.0)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.15)
+
+  packages/autopilot:
+    dependencies:
+      '@jobpilot/apply':
+        specifier: workspace:*
+        version: link:../apply
+      '@jobpilot/core':
+        specifier: workspace:*
+        version: link:../core
+      '@jobpilot/db':
+        specifier: workspace:*
+        version: link:../db
+      playwright:
+        specifier: 1.63.0
+        version: 1.63.0
     devDependencies:
       '@types/node':
         specifier: ^24.5.2

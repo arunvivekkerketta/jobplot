@@ -82,12 +82,27 @@ test("gate 1.14: audit page lists the profile.save row after import", async ({
   await expect(page.getByTestId("audit-table")).toContainText("profile.save");
 });
 
-test("gate 1.15: AUTOPILOT and allowSubmit controls are disabled", async ({
+test("gate 1.15: the AUTOPILOT and allowSubmit controls are editable and persisted", async ({
   page,
 }) => {
   await login(page);
   await page.goto("/settings");
-  await expect(page.getByTestId("mode-select")).toBeDisabled();
-  await expect(page.getByTestId("allow-submit")).toBeDisabled();
-  await expect(page.getByText("Unlocked in Phase 7").first()).toBeVisible();
+
+  // Auto-Pilot exists now, so these controls are no longer placeholders: the
+  // gate checks they are operable and that saving them reaches the API.
+  const mode = page.getByTestId("mode-select");
+  await expect(mode).toBeEnabled();
+  await expect(page.getByTestId("allow-submit")).toBeEnabled();
+  await mode.selectOption("COPILOT");
+  const allowSubmit = page.getByTestId("allow-submit");
+  if (await allowSubmit.isChecked()) await allowSubmit.uncheck();
+  await page.getByRole("button", { name: "Save settings" }).click();
+  await expect(page.getByTestId("settings-saved")).toBeVisible({ timeout: 20_000 });
+
+  const saved = (await (await page.request.get("/api/settings")).json()) as {
+    mode: string;
+    allowSubmit: boolean;
+  };
+  expect(saved.mode).toBe("COPILOT");
+  expect(saved.allowSubmit).toBe(false);
 });

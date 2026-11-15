@@ -13,7 +13,8 @@ export interface SettingsData {
 
 export default function SettingsForm({ initial }: { initial: SettingsData }) {
   const router = useRouter();
-  const [mode] = useState(initial.mode);
+  const [mode, setMode] = useState(initial.mode);
+  const [allowSubmit, setAllowSubmit] = useState(initial.allowSubmit);
   const [dailyCap, setDailyCap] = useState(initial.dailyCap);
   const [matchThreshold, setMatchThreshold] = useState(initial.matchThreshold);
   const [killSwitch, setKillSwitch] = useState(initial.killSwitch);
@@ -29,7 +30,7 @@ export default function SettingsForm({ initial }: { initial: SettingsData }) {
     const res = await fetch("/api/settings", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ dailyCap, matchThreshold, killSwitch }),
+      body: JSON.stringify({ mode, allowSubmit, dailyCap, matchThreshold, killSwitch }),
     });
     setBusy(false);
     if (res.ok) {
@@ -52,24 +53,28 @@ export default function SettingsForm({ initial }: { initial: SettingsData }) {
           data-testid="mode-select"
           className="input"
           value={mode}
-          disabled
+          onChange={(e) => setMode(e.target.value)}
         >
           <option value="COPILOT">COPILOT</option>
           <option value="AUTOPILOT">AUTOPILOT</option>
         </select>
-        <p className="mt-1 text-xs text-neutral-500">Unlocked in Phase 7.</p>
+        <p className="mt-1 text-xs text-neutral-500">
+          AUTOPILOT lets the worker submit qualifying applications on its schedule.
+        </p>
       </div>
 
       <div className="flex items-center justify-between">
         <div>
           <span className="text-sm font-medium">allowSubmit (master submit switch)</span>
-          <p className="text-xs text-neutral-500">Unlocked in Phase 7.</p>
+          <p className="text-xs text-neutral-500">
+            Required before a portal can be unlocked for Auto-Pilot.
+          </p>
         </div>
         <input
           type="checkbox"
           data-testid="allow-submit"
-          checked={initial.allowSubmit}
-          disabled
+          checked={allowSubmit}
+          onChange={(e) => setAllowSubmit(e.target.checked)}
           className="h-5 w-5"
         />
       </div>

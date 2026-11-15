@@ -16,6 +16,7 @@ import type { JsonResumeProfile } from "@jobpilot/core";
 import {
   createApplication,
   listAnswers,
+  listSchedulingSettings,
   prisma,
   readDocumentBytes,
   recordApplicationResult,
@@ -85,9 +86,14 @@ async function loadCandidates(
   if (!profile) return [];
 
   const matches = await prisma.matchScore.findMany({
-    where: { profileId: profile.id },
+    // An explicit job filter must run in the query: a score-ordered `take` would
+    // truncate the requested postings before the filter ever saw them.
+    where: {
+      profileId: profile.id,
+      ...(filter.jobIds ? { jobId: { in: filter.jobIds } } : {}),
+    },
     orderBy: [{ score: "desc" }, { id: "asc" }],
-    take: 30,
+    take: filter.jobIds ? 50 : 30,
     include: {
       job: { select: { id: true, title: true, url: true, source: true } },
     },
@@ -104,10 +110,14 @@ async function loadCandidates(
     select: { jobId: true, status: true },
   });
   // A paused application is retried (a missing Answer Bank entry is fixable);
-  // only a submitted one is finished.
+  // only a submitted one is finished. A posting that ended in ERROR is left
+  // alone: its page is unreachable, and a scheduled tick must not spend its one
+  // slot on the same dead host every time.
   const applied = new Set(
     applications
-      .filter((application) => application.status === "SUBMITTED")
+      .filter(
+        (application) => application.status === "SUBMITTED" || application.status === "ERROR",
+      )
       .map((application) => application.jobId),
   );
 
@@ -426,4 +436,126 @@ export async function runAutopilotNow(
     await browser.close();
     for (const file of tempFiles) fs.rmSync(file, { force: true });
   }
+}
+/** Each scheduled tick spends at most one submission per user. */
+export const SCHEDULED_MAX_PER_USER = 1;
+
+export interface SchedulingSettings {
+  userId: string;
+  mode: string;
+  allowSubmit: boolean;
+  killSwitch: boolean;
+  perPortalMode: unknown;
+}
+
+/**
+ * Pure predicate for the cron tick: a user is due only when Auto-Pilot is the
+ * chosen mode, submissions are enabled, nothing is stopped and at least one
+ * portal is unlocked. Anything else is ignored silently rather than guarded
+ * per-posting, because a tick must not open a browser for a user who never
+ * opted in.
+ */
+export function isScheduledCandidate(settings: SchedulingSettings): boolean {
+  if (settings.mode !== "AUTOPILOT") return false;
+  if (!settings.allowSubmit || settings.killSwitch) return false;
+  const policies = settings.perPortalMode;
+  if (typeof policies !== "object" || policies === null) return false;
+  return Object.keys(policies as Record<string, unknown>).some(
+    (portal) => readPortalPolicy(policies, portal) !== null,
+  );
+}
+
+export interface ScheduledUserResult {
+  userId: string;
+  queued: number;
+  submitted: number;
+  paused: number;
+  stopReason: string | null;
+  error?: string;
+}
+
+export interface ScheduledRunReport {
+  considered: number;
+  due: number;
+  submitted: number;
+  users: ScheduledUserResult[];
+}
+
+export interface ScheduledRunDeps {
+  listSettings: () => Promise<SchedulingSettings[]>;
+  runForUser: (
+    userId: string,
+    limit: number,
+  ) => Promise<{ queued: number; submitted: number; paused: number; stopReason: string | null }>;
+  audit: (payload: Record<string, unknown>) => Promise<void>;
+}
+
+/**
+ * One scheduler tick shared by the worker and the authenticated tick endpoint.
+ * A failing user never blocks the rest, and the tick always writes one summary
+ * audit row so a quiet schedule is distinguishable from a silent failure (I8).
+ */
+export async function runScheduledAutopilot(
+  deps: ScheduledRunDeps,
+  options: { limitPerUser?: number; now?: Date } = {},
+): Promise<ScheduledRunReport> {
+  const limit = options.limitPerUser ?? SCHEDULED_MAX_PER_USER;
+  const all = await deps.listSettings();
+  const due = all.filter(isScheduledCandidate);
+  const users: ScheduledUserResult[] = [];
+  let submitted = 0;
+
+  for (const settings of due) {
+    try {
+      const result = await deps.runForUser(settings.userId, limit);
+      submitted += result.submitted;
+      users.push({
+        userId: settings.userId,
+        queued: result.queued,
+        submitted: result.submitted,
+        paused: result.paused,
+        stopReason: result.stopReason,
+      });
+    } catch (error) {
+      users.push({
+        userId: settings.userId,
+        queued: 0,
+        submitted: 0,
+        paused: 0,
+        stopReason: null,
+        error: error instanceof Error ? error.message : "unknown error",
+      });
+    }
+  }
+
+  await deps.audit({
+    considered: all.length,
+    due: due.length,
+    submitted,
+    ran: users.length,
+    errors: users.filter((user) => user.error !== undefined).length,
+    at: (options.now ?? new Date()).toISOString(),
+  });
+
+  return { considered: all.length, due: due.length, submitted, users };
+}
+
+/** Production wiring: real settings rows, the real run path, the real audit log. */
+export async function runScheduledTick(
+  options: { limitPerUser?: number; now?: Date } = {},
+): Promise<ScheduledRunReport> {
+  return runScheduledAutopilot(
+    {
+      listSettings: () => listSchedulingSettings(),
+      runForUser: (userId, limit) => runAutopilotNow(userId, { limit }),
+      audit: (payload) =>
+        writeAudit({
+          actor: "SYSTEM",
+          action: "autopilot.tick",
+          entityType: "Settings",
+          payload,
+        }),
+    },
+    options,
+  );
 }

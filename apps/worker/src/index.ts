@@ -2,6 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import PgBoss from "pg-boss";
 import { saveJobs, writeAudit } from "@jobpilot/db";
+import { runScheduledTick } from "@jobpilot/autopilot";
 import {
   JOB_BOARDS_ENV,
   fetchSourceJobs,
@@ -27,6 +28,12 @@ try {
 
 const HEARTBEAT_QUEUE = "system-heartbeat";
 const FETCH_SOURCES_QUEUE = "fetch-sources";
+const AUTOPILOT_QUEUE = "autopilot-tick";
+/**
+ * Every tick spends at most one submission per opted-in user, so fifteen minutes
+ * is comfortably inside the per-host interval (30s) and the daily cap.
+ */
+const AUTOPILOT_CRON = process.env.AUTOPILOT_CRON ?? "*/15 * * * *";
 /** Boards change slowly; six-hourly is plenty and stays polite to public APIs. */
 const FETCH_SCHEDULE = "0 */6 * * *";
 
@@ -86,6 +93,24 @@ async function main(): Promise<void> {
       ? `[worker] ${JOB_BOARDS_ENV} is empty; no boards scheduled (fetch on demand from /jobs)`
       : `[worker] ${boards.length} board(s) scheduled every 6 hours from ${JOB_BOARDS_ENV}`,
   );
+
+  // Auto-Pilot cadence: the worker runs the same `runScheduledTick` service the
+  // authenticated tick endpoint uses, so the schedule cannot drift from the
+  // on-demand path (gate 8.3).
+  await boss.createQueue(AUTOPILOT_QUEUE);
+  await boss.work(AUTOPILOT_QUEUE, async () => {
+    const report = await runScheduledTick();
+    console.log(
+      `[worker] autopilot-tick considered=${report.considered} due=${report.due} submitted=${report.submitted}`,
+    );
+    for (const user of report.users) {
+      console.log(
+        `[worker] autopilot-tick user=${user.userId} queued=${user.queued} submitted=${user.submitted} paused=${user.paused} stop=${user.stopReason ?? "none"}${user.error ? ` error=${user.error}` : ""}`,
+      );
+    }
+  });
+  await boss.schedule(AUTOPILOT_QUEUE, AUTOPILOT_CRON, {}, { singletonKey: "autopilot-tick" });
+  console.log(`[worker] ${AUTOPILOT_QUEUE} scheduled (${AUTOPILOT_CRON})`);
 
   const shutdown = async (): Promise<void> => {
     console.log("[worker] shutting down");

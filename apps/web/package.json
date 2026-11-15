@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@jobpilot/apply": "workspace:*",
+    "@jobpilot/autopilot": "workspace:*",
     "@jobpilot/core": "workspace:*",
     "@jobpilot/db": "workspace:*",
     "@jobpilot/llm": "workspace:*",
@@ -19,7 +20,6 @@
     "@jobpilot/sources": "workspace:*",
     "next": "15.5.4",
     "next-auth": "5.0.0-beta.29",
-    "playwright": "1.63.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "zod": "^3.25.76"

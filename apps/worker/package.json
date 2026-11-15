@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@jobpilot/autopilot": "workspace:*",
     "@jobpilot/db": "workspace:*",
     "@jobpilot/sources": "workspace:*",
     "pg-boss": "^10.1.5"

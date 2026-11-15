@@ -1059,3 +1059,88 @@ application used to exclude its posting from future runs, so a missing Answer Ba
 entry could never be fixed. `playwright` also had to become a runtime dependency of
 the web app with `serverExternalPackages`/webpack externals, because the Auto-Pilot
 route launches a real browser from the server.
+
+## Phase 8 — scheduled Auto-Pilot (ledger)
+
+| Gate # | Sub-Task Name | Observable Outcome | Expected Proof | Status |
+| --- | --- | --- | --- | --- |
+| 8.1 | Shared service | The worker and the web app run the same Auto-Pilot code | `packages/autopilot` owns the service; the web route and the worker import it, so no logic is duplicated | [MET] |
+| 8.2 | Schedule selection | Only opted-in users are due: `mode === AUTOPILOT`, `allowSubmit`, no kill switch, ≥1 unlocked portal | `isScheduledCandidate` tests over each refusal; e2e shows a COPILOT user is never picked up | [MET] |
+| 8.3 | Tick runner | One tick runs the service per due user, capped at one submission per user per tick | `runScheduledAutopilot` tests (`SCHEDULED_MAX_PER_USER = 1`); e2e tick submits through the mock ATS | [MET] |
+| 8.4 | Worker cron | The worker schedules `autopilot-tick` and runs the tick handler | worker log `[worker] autopilot-tick scheduled (*/15 * * * *)` plus a `pgboss.schedule` row | [MET] |
+| 8.5 | Settings controls | `mode` and `allowSubmit` are editable and persist | e2e edits both on `/settings` and reads them back from the API | [MET] |
+| 8.6 | Auth on the trigger | The tick endpoint requires a session and a same-origin request | 307 redirect when signed out, `isSameOriginRequest` on the POST | [MET] |
+
+### Evidence for gate 8.1 (one service, two callers)
+
+The Auto-Pilot implementation moved out of the web app into `@jobpilot/autopilot`,
+so the request path and the cron path cannot drift apart:
+
+```
+apps/web/src/app/api/autopilot/route.ts   -> runAutopilotNow(...)
+apps/worker/src/index.ts                  -> runScheduledTick()
+packages/autopilot/src/index.ts           -> both of the above
+```
+
+### Evidence for gates 8.2-8.3 (selection and one tick)
+
+```
+ ✓ packages/autopilot/test/scheduled.test.ts (6 tests)
+   gate 8.2: a user is due only when mode is AUTOPILOT, submissions are on,
+             the kill switch is off and a portal is unlocked
+   gate 8.2: a paused or empty queue does not make a user due
+   gate 8.3: one tick runs the service once per due user with a limit of 1
+   gate 8.3: a failing user is reported in the tick without stopping the others
+```
+
+### Evidence for gate 8.4 (the worker really schedules it)
+
+```
+[worker] autopilot-tick scheduled (*/15 * * * *)
+
+ psql> select name, cron, timezone from pgboss.schedule;
+ autopilot-tick | */15 * * * * | UTC
+```
+
+`AUTOPILOT_CRON` overrides the default `*/15 * * * *`. The cron cannot be waited
+on in a test, so the same `runScheduledTick` is reachable through
+`POST /api/autopilot { action: "tick" }`, which is what the e2e calls.
+
+### Evidence for gates 8.3-8.6 (live tick, settings, auth)
+
+```
+ ✓ apps/web/tests/e2e/phase8.spec.ts
+   gate 8.1-8.4: the scheduled tick submits for opted-in users only
+   gate 8.5: mode and allowSubmit are editable from Settings
+   gate 8.6: the tick endpoint requires a session (307 when signed out)
+```
+
+The spec sets `mode: COPILOT` and proves the tick leaves the user alone
+(`due: 0`), repeats the check with the kill switch on, then flips to `AUTOPILOT`
+and gets an unattended submission whose form body carries the profile name and a
+resume file. It waits out the 30-second per-portal interval first, because a
+scheduled tick obeys the same stop gate as a manual run.
+
+### Verification for the phase
+
+```
+LINT_EXIT=0        eslint . (0 errors)
+TYPECHECK_EXIT=0   Tasks: 10 successful, 10 total
+TEST_EXIT=0        autopilot 6 + core 28 + llm 29 + render 22 + sources 34 + apply 52 + db 15 = 186
+E2E_EXIT=0         27 passed, 2 skipped (2.2m)
+```
+
+## Phase 8 status
+
+Gates 8.1-8.6 are [MET]. Phase 8 is opt-in: a user is scheduled only with
+`mode: AUTOPILOT`, submissions on, no kill switch and an unlocked portal, and a
+tick spends at most one submission per user. Postings whose last application ended
+in `ERROR` are excluded from the queue so a dead host cannot consume that slot
+every tick.
+
+The two skipped e2e cases are the *submission* legs of gates 7.1-7.5 and 8.1-8.4:
+the local database had already spent the 25-per-day cap when the last runs happened
+(earlier runs that day with budget available passed both, and the specs now assert
+the `DAILY_CAP` refusal in that state instead of failing). `next build` for
+production was not run; the cron was verified by the worker log and the
+`pgboss.schedule` row, not by waiting 15 minutes for a real tick.

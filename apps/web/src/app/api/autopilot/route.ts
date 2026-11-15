@@ -7,8 +7,9 @@ import {
   BrowserUnavailableError,
   loadAutopilotStatus,
   runAutopilotNow,
+  runScheduledTick,
   updatePortal,
-} from "@/lib/autopilot";
+} from "@jobpilot/autopilot";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +23,8 @@ const actionSchema = z.discriminatedUnion("action", [
     jobIds: z.array(z.string().min(1)).max(10).optional(),
   }),
   z.object({ action: z.literal("stop") }),
+  /** Runs the scheduler once, for the same service the cron job calls. */
+  z.object({ action: z.literal("tick") }),
 ]);
 
 export async function GET() {
@@ -82,6 +85,18 @@ export async function POST(req: Request) {
       payload: { killSwitch: true },
     });
     return NextResponse.json({ stopReason: "KILL_SWITCH" });
+  }
+
+  if (parsed.data.action === "tick") {
+    try {
+      const report = await runScheduledTick();
+      return NextResponse.json(report, { headers: { "Cache-Control": "no-store" } });
+    } catch (error) {
+      if (error instanceof BrowserUnavailableError) {
+        return NextResponse.json({ error: error.message }, { status: 503 });
+      }
+      return NextResponse.json({ error: "Scheduled tick failed" }, { status: 500 });
+    }
   }
 
   try {

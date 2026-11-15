@@ -829,3 +829,28 @@ export async function setPortalPolicy(input: {
     return next;
   }, TX_OPTIONS);
 }
+
+/**
+ * Settings rows for the Auto-Pilot scheduler. `perPortalMode` is returned raw so
+ * the caller's pure predicate decides who is due (gate 8.2).
+ */
+export async function listSchedulingSettings(): Promise<
+  Array<{
+    userId: string;
+    mode: string;
+    allowSubmit: boolean;
+    killSwitch: boolean;
+    perPortalMode: unknown;
+  }>
+> {
+  return prisma.settings.findMany({
+    select: {
+      userId: true,
+      mode: true,
+      allowSubmit: true,
+      killSwitch: true,
+      perPortalMode: true,
+    },
+    orderBy: { userId: "asc" },
+  });
+}

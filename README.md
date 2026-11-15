@@ -14,7 +14,10 @@ threshold gate, redacted explanations and pgvector embeddings), **Phase 6 —
 tailoring** (fact-only resume selection with a keyword loop, explicit approval
 before applying, and Answer Bank CRUD) and **Phase 7 — Auto-Pilot** (per-portal
 unlock, a queue decided before any browser opens, daily and per-portal caps, and a
-kill switch that stops a batch mid-run). The rules every phase must follow live in
+kill switch that stops a batch mid-run) and **Phase 8 — scheduled Auto-Pilot** (an
+`autopilot-tick` cron in the worker that runs the same Auto-Pilot service as the
+Run button, spending at most one submission per opted-in user per tick; set
+`AUTOPILOT_CRON` to change the cadence). The rules every phase must follow live in
 `CLAUDE.md`.
 
 ## Requirements
