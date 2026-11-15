@@ -77,6 +77,13 @@ and every other counter start at zero and the suite is repeatable. Set
 if the mock ATS is not on :4600. The mock ATS is started (or reused) by the same
 config.
 
+GitHub Actions runs the same gates on every push to `main` and every pull request
+(`.github/workflows/ci.yml`): a `pgvector/pgvector:pg16` service container, a
+frozen-lockfile install, migrations plus seed, then `pnpm lint`, `pnpm typecheck`
+and `pnpm test`; the e2e job adds Chromium and runs `pnpm e2e` against its own
+`<database>_e2e`. Playwright traces are uploaded when the e2e job fails. No LLM key
+is configured in CI, so the suites exercise the deterministic fallbacks.
+
 ## Layout
 
 ```

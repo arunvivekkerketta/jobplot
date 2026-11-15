@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# The same values the local .env carries, minus every real credential: no LLM key
+# is set on purpose, so the suites exercise the deterministic fallbacks.
+env:
+  DATABASE_URL: postgresql://jobpilot:jobpilot@localhost:5432/jobpilot
+  APP_ENCRYPTION_KEY: BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=
+  NEXTAUTH_SECRET: ci-secret-not-for-production
+  NEXTAUTH_URL: http://localhost:3100
+  ADMIN_EMAIL: admin@jobpilot.local
+  ADMIN_PASSWORD: jobpilot-admin
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  checks:
+    name: lint, typecheck, unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        # pgvector/pgvector:pg16 ships the `vector` extension the init migration
+        # enables for Job.embedding, so no extension has to be installed by hand.
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: jobpilot
+          POSTGRES_PASSWORD: jobpilot
+          POSTGRES_DB: jobpilot
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U jobpilot -d jobpilot"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # pnpm has to exist before setup-node so its cache can be restored; the
+      # version comes from the "packageManager" field in package.json.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm db:generate
+
+      - name: Apply migrations and seed
+        run: |
+          pnpm db:migrate
+          pnpm db:seed
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit tests
+        run: pnpm test
+
+  e2e:
+    name: e2e (isolated database)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: checks
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: jobpilot
+          POSTGRES_PASSWORD: jobpilot
+          POSTGRES_DB: jobpilot
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U jobpilot -d jobpilot"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium for Playwright
+        run: pnpm --filter @jobpilot/web exec playwright install --with-deps chromium
+
+      # No migrate step here: apps/web/scripts/e2e-db.mjs drops, creates,
+      # migrates and seeds "<database>_e2e" itself, and Playwright starts the app
+      # on :3100 against that database. The mock ATS is started by the config.
+      - name: End-to-end suite
+        run: pnpm e2e
+
+      - name: Upload Playwright traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: |
+            apps/web/test-results
+            apps/web/playwright-report
+          retention-days: 7
+          if-no-files-found: ignore

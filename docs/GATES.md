@@ -1221,3 +1221,89 @@ re-created from the committed migrations, seeded with the admin user and default
 Settings, and the app runs on :3100 with that URL, so a developer `pnpm dev` on
 :3000 keeps its own data and the run repeats identically any number of times in
 a day. `E2E_DATABASE_URL` still overrides the derived name for CI.
+
+## Phase 10 — CI (ledger)
+
+| Gate # | Sub-Task Name | Observable Outcome | Expected Proof | Status |
+| --- | --- | --- | --- | --- |
+| 10.1 | Postgres with pgvector | CI provides Postgres 16 with the `vector` extension | `pgvector/pgvector:pg16` service with a `pg_isready` health check; `pnpm db:migrate` applies the init migration that runs `CREATE EXTENSION vector` | [MET] |
+| 10.2 | Toolchain parity | Node and the pinned pnpm as the repo requires | `pnpm/action-setup` + `setup-node` (node 22, `cache: pnpm`) and `pnpm install --frozen-lockfile` | [MET] |
+| 10.3 | Static checks and unit tests | lint, typecheck and vitest run on every push/PR | workflow steps calling the repo scripts; all exit 0 locally | [MET] |
+| 10.4 | Isolated e2e suite | The e2e job provisions its own database, browser and mock ATS | job env points at the service database; `playwright install --with-deps chromium`; `pnpm e2e` bootstraps `jobpilot_e2e` | [MET] |
+| 10.5 | Diagnostics | Failures leave traces to inspect | `actions/upload-artifact` of `apps/web/test-results` and `apps/web/playwright-report` on failure | [MET] |
+| 10.6 | Verified locally | The workflow is valid and every command in it passes here | YAML parsed, key decodes to 32 bytes, all steps exit 0, e2e green with `.env` removed | [MET] |
+
+### Evidence for gates 10.1-10.4 (the workflow)
+
+`.github/workflows/ci.yml` defines two jobs over a `pgvector/pgvector:pg16`
+service, because the init migration carries `CREATE EXTENSION IF NOT EXISTS vector`
+for `Job.embedding` — a plain Postgres image would fail that migration:
+
+```yaml
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    env: { POSTGRES_USER: jobpilot, POSTGRES_PASSWORD: jobpilot, POSTGRES_DB: jobpilot }
+    ports: ["5432:5432"]
+    options: --health-cmd "pg_isready -U jobpilot -d jobpilot" …
+
+env:   # job level
+  DATABASE_URL: postgresql://jobpilot:jobpilot@localhost:5432/jobpilot
+  APP_ENCRYPTION_KEY: BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=   # 32 bytes
+  ADMIN_EMAIL: admin@jobpilot.local
+  ADMIN_PASSWORD: jobpilot-admin
+```
+
+The e2e job deliberately runs no migrate step of its own: `pnpm e2e` starts the
+`webServer` command `node scripts/e2e-db.mjs && pnpm exec next dev -p 3100`, which
+creates, migrates and seeds `jobpilot_e2e` on the service database. Artifacts:
+
+```yaml
+- name: Upload Playwright traces
+  if: failure()
+  uses: actions/upload-artifact@v4
+  with: { name: playwright-traces, path: "apps/web/test-results\napps/web/playwright-report" }
+```
+
+### Evidence for gate 10.6 (every command run locally)
+
+YAML structure and the encryption key were checked with a real parser:
+
+```
+parsed ok jobs=checks|e2e checksSteps=9 e2eSteps=7 svc=postgres key_len=32
+```
+
+Then each command the workflow runs, in order, on this machine:
+
+```
+INSTALL=0     pnpm install --frozen-lockfile        (Done in 3s using pnpm v10.34.5)
+GENERATE=0    pnpm db:generate
+MIGRATE=0     pnpm db:migrate                       (No pending migrations to apply.)
+SEED=0        pnpm db:seed                          (Seeded admin admin@jobpilot.local …)
+LINT=0        pnpm lint
+TYPECHECK=0   pnpm typecheck
+TEST=0        pnpm test                            (186 unit tests)
+```
+
+CI has no `.env`, so the suite was also run with the file removed and only the
+workflow's environment exported — the config falls back to `process.env`:
+
+```
+$ mv .env .env.ci-bak && export $(grep -E '^(DATABASE_URL|APP_ENCRYPTION_KEY|…)' .env.ci-bak) && pnpm e2e
+[e2e] database postgresql://jobpilot:***@localhost:55432/jobpilot_e2e on http://localhost:3100
+  29 passed (3.0m)
+```
+
+## Phase 10 status
+
+All six gates are [MET]. The workflow runs on pushes to `main`, on pull requests
+and on `workflow_dispatch`, cancels superseded runs per ref, and splits the work
+into a `checks` job (install, migrate, seed, lint, typecheck, unit tests) and an
+e2e job that needs it. CI sets no `ANTHROPIC_API_KEY` and no board credentials on
+purpose: every suite exercises the deterministic fallbacks, so the job needs no
+secrets beyond the throwaway database and admin values in the workflow itself.
+
+Not verified: an actual GitHub Actions run. The workflow file is parsed and every
+command it runs was executed successfully here, but the runner image, service
+container networking and Playwright browser install can only be proven by pushing
+the branch.
