@@ -937,3 +937,125 @@ deterministic tailoring path first stored a placeholder claim report with
 so the audit records the real count. The local Postgres cluster also had to be
 restarted (it had crashed with `0xC0000142` and left a stale pidfile) before the db
 suite could connect.
+
+## Phase 7 — Auto-Pilot (ledger)
+
+| Gate # | Sub-Task Name | Observable Outcome | Expected Proof | Status |
+| --- | --- | --- | --- | --- |
+| 7.1 | Portal unlock policy | A portal runs unattended only when unlocked and `allowSubmit` is on | `packages/apply/test/autopilot.test.ts`; API returns 409 while submissions are off | [MET] |
+| 7.2 | Eligibility and queue | Only above-threshold postings on unlocked portals with an approved resume are queued | Queue tests assert one reason per skipped posting; e2e sees `NO_APPROVED_RESUME` | [MET] |
+| 7.3 | Cap accounting | Daily and per-portal counts come from stored submissions | `submissionCounts` tests plus the e2e `DAILY_CAP` block | [MET] |
+| 7.4 | Auto-Pilot loop | The loop submits sequentially with no click and stops on the first blocked gate | Loop tests (fake page) and a real submission through the mock ATS | [MET] |
+| 7.5 | Persistence and audit | Portal policies persist and unlock/lock/run/skip/stop are audited | db rows and `portal.unlock`/`autopilot.run` audit counts | [MET] |
+| 7.6 | API | Status, unlock, lock, run and stop are guarded endpoints | 401/307 checks, 409 refusals, run returning per-candidate outcomes | [MET] |
+| 7.7 | Auto-Pilot UI | `/autopilot` shows portals, the queue and the last run | e2e on `portal-row`, `autopilot-last-run`, lock/unlock/stop buttons | [MET] |
+| 7.8 | Live Auto-Pilot e2e | Unattended submissions happen, caps hold and the kill switch stops the run | mock-ATS submission log plus audit assertions | [MET] |
+
+### Evidence for gates 7.1-7.4 (policy, queue, caps, loop)
+
+`packages/apply/src/autopilot.ts` holds the whole decision surface. A portal is
+unlocked only when `Settings.perPortalMode[portal]` carries an `AUTOPILOT` mode
+with an unlock timestamp, and unlocking is refused while submissions are off or
+the kill switch is on:
+
+```ts
+export function canUnlockPortal(settings: { allowSubmit: boolean; killSwitch: boolean }) {
+  if (settings.killSwitch) return { ok: false, reason: "KILL_SWITCH", message: "…" };
+  if (!settings.allowSubmit) return { ok: false, reason: "SUBMIT_DISABLED", message: "…" };
+  return { ok: true };
+}
+```
+
+`selectAutopilotQueue` decides the queue before a browser opens, and the counts
+include the postings it has already accepted, so a plan cannot overshoot a cap:
+
+```
+ ✓ test/autopilot.test.ts (12 tests)
+   gate 7.1: a portal runs unattended only when it is unlocked
+   gate 7.2: the queue carries one reason per skipped posting
+   gate 7.3: caps count what a run has already planned
+   gate 7.4: the loop submits without a click and re-checks the gate each time
+```
+
+```
+$ pnpm --filter @jobpilot/apply test
+ Test Files  6 passed (6)
+      Tests  52 passed (52)
+```
+
+The loop re-evaluates `evaluatePreflight` before every application and returns the
+blocking reason, which is what makes the kill switch stop a batch midway:
+
+```
+    expect(counter.submits).toBe(1);
+    expect(report.stopReason).toBe("KILL_SWITCH");
+```
+
+### Evidence for gates 7.5-7.8 (persistence, API, UI, live run)
+
+`setPortalPolicy` merges `Settings.perPortalMode` and writes the audit row in one
+transaction; `createApplication` records `mode: "AUTOPILOT"` for unattended rows
+so the two paths stay distinguishable afterwards:
+
+```
+     action     | count
+----------------+-------
+ autopilot.run  |     6
+ autopilot.skip |    12
+ autopilot.stop |     4
+ portal.lock    |     2
+ portal.unlock  |    18
+
+   mode    |       status       | count
+-----------+--------------------+-------
+ AUTOPILOT | PAUSED_NEEDS_HUMAN |     4
+ AUTOPILOT | SUBMITTED          |     2
+ COPILOT   | QUEUED             |    13
+ COPILOT   | SUBMITTED          |     5
+
+                                perPortalMode                                | allowSubmit | dailyCap | killSwitch
+-----------------------------------------------------------------------------+-------------+----------+------------
+ {"manual": {"mode": "AUTOPILOT", "unlockedAt": "2026-11-15T08:49:36.440Z"}} | t           |        4 | t
+```
+
+The paused `AUTOPILOT` rows are the runs that stopped because the Greenhouse
+fixture asks for a cover letter that only the Answer Bank may supply (I5); once
+the entry exists the same posting is retried and submitted, which is also why
+candidate loading ignores a paused application.
+
+```
+$ pnpm --filter @jobpilot/web exec playwright test tests/e2e/phase7.spec.ts --reporter=line
+[1/3] gate 7.1-7.5: Auto-Pilot submits unattended behind portals, caps and audits
+[2/3] gate 7.7: the page shows portals, the queue and the last run
+[3/3] gate 7.8: Auto-Pilot is behind the auth wall
+  3 passed (50.5s)
+```
+
+The spec makes the flow explicit: unlocking with `allowSubmit` off returns 409;
+with it on, a posting without an approved version is skipped
+(`NO_APPROVED_RESUME`); after approval the run submits once with no click, and the
+mock ATS log shows exactly one `POST /submit/greenhouse` carrying the profile name
+and a resume file. Lowering the daily cap to the stored submission count blocks the
+next run with `DAILY_CAP`, and `stop` raises the kill switch so the following run
+reports `KILL_SWITCH` and sends nothing.
+
+### Verification for the phase
+
+```
+TYPECHECK_EXIT=0   Tasks: 9 successful, 9 total
+LINT_EXIT=0        eslint . (0 errors)
+TEST_EXIT=0        Tasks: 6 successful, 6 total
+                   core 28 + llm 29 + render 22 + sources 34 + apply 52 + db 15
+E2E_EXIT=0         26 passed (2.2m)
+```
+
+## Phase 7 status
+
+All eight Phase 7 gates are [MET] with the evidence above. Three defects were fixed
+while proving them: `readDocumentBytes` destructured a `userId` that did not exist
+in scope, the resume fallback attached a version tailored for a *different* posting
+(it now requires the posting's own approved version or a generic one), and a paused
+application used to exclude its posting from future runs, so a missing Answer Bank
+entry could never be fixed. `playwright` also had to become a runtime dependency of
+the web app with `serverExternalPackages`/webpack externals, because the Auto-Pilot
+route launches a real browser from the server.

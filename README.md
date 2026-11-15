@@ -10,10 +10,12 @@ adapters, paste-and-import, canonical-URL dedupe and the scheduled
 `fetch-sources` queue), **Phase 4 — application executor** (canonical field
 mapping, the Answer Bank resolver, the stop gate and a browser runner proven
 against the mock ATS), **Phase 5 — matching** (deterministic scores with a
-threshold gate, redacted explanations and pgvector embeddings) and **Phase 6 —
+threshold gate, redacted explanations and pgvector embeddings), **Phase 6 —
 tailoring** (fact-only resume selection with a keyword loop, explicit approval
-before applying, and Answer Bank CRUD). Later phases add Auto-Pilot; the rules
-every phase must follow live in `CLAUDE.md`.
+before applying, and Answer Bank CRUD) and **Phase 7 — Auto-Pilot** (per-portal
+unlock, a queue decided before any browser opens, daily and per-portal caps, and a
+kill switch that stops a batch mid-run). The rules every phase must follow live in
+`CLAUDE.md`.
 
 ## Requirements
 
@@ -96,11 +98,13 @@ enforced in code, not just documented — see `CLAUDE.md` for the full protocol.
 ## Phase status
 
 All 15 Phase 1 gates, 9 Phase 2 gates, 18 Phase 3 gates, 10 Phase 4 gates, 10
-Phase 5 gates and 8 Phase 6 gates are met; the exact commands and outputs are
-recorded in [`docs/GATES.md`](docs/GATES.md). Job boards can be fetched in the
+Phase 5 gates, 8 Phase 6 gates and 8 Phase 7 gates are met; the exact commands and
+outputs are recorded in [`docs/GATES.md`](docs/GATES.md). Job boards can be fetched in the
 background and postings pasted by hand, an application can be filled and
 submitted against the mock ATS behind the kill switch, caps, rate limit and
 consent checks with every browser action audited, each posting is scored,
 explained and embedded so the threshold decides what is eligible to apply, and a
 resume can be tailored to a posting from the profile's own facts, reviewed,
-approved by hand and only then attached to an application.
+approved by hand and only then attached to an application, and an unlocked portal
+can submit qualifying applications unattended until a cap or the kill switch stops
+it.

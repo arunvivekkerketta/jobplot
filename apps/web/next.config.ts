@@ -24,13 +24,16 @@ const nextConfig: NextConfig = {
     "@jobpilot/sources",
   ],
   // Argon2 ships a prebuilt .node binary; webpack cannot parse it.
-  serverExternalPackages: ["@node-rs/argon2", "pdfkit", "docx"],
+  // Playwright drives a real browser from the Auto-Pilot route, so it stays a
+  // runtime require instead of being pulled into the server bundle.
+  serverExternalPackages: ["@node-rs/argon2", "pdfkit", "docx", "playwright"],
   webpack: (config) => {
     // serverExternalPackages alone does not cover imports that flow through
     // the transpiled @jobpilot/db package, so mark the binary external here.
     config.externals = [
       ...(Array.isArray(config.externals) ? config.externals : []),
       { "@node-rs/argon2": "commonjs @node-rs/argon2" },
+      { playwright: "commonjs playwright" },
     ];
     // The workspace packages use NodeNext-style "./x.js" specifiers for
     // TypeScript sources; teach webpack to resolve them to ./x.ts.

@@ -36,6 +36,9 @@ export default function RootLayout({
                 <Link href="/answers" className="hover:text-blue-700">
                   Answers
                 </Link>
+                <Link href="/autopilot" className="hover:text-blue-700">
+                  Auto-Pilot
+                </Link>
                 <Link href="/audit" className="hover:text-blue-700">Audit</Link>
                 <Link href="/settings" className="hover:text-blue-700">Settings</Link>
               </nav>

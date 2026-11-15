@@ -7,6 +7,7 @@ export * from "./types.js";
 export * from "./fields.js";
 export * from "./answers.js";
 export * from "./preflight.js";
+export * from "./autopilot.js";
 export * from "./plan.js";
 export * from "./runner.js";
 export * from "./playwrightPage.js";

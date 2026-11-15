@@ -268,6 +268,7 @@ export interface ApplicationAction {
 export async function createApplication(input: {
   jobId: string;
   portal: string;
+  mode?: "COPILOT" | "AUTOPILOT";
 }): Promise<{ id: string; status: string }> {
   return prisma.$transaction(async (tx) => {
     const existing = await tx.application.findUnique({
@@ -281,19 +282,25 @@ export async function createApplication(input: {
         jobId: input.jobId,
         portal: input.portal,
         status: "QUEUED",
-        mode: "COPILOT",
-        events: { create: { type: "CREATED", payload: { portal: input.portal } } },
+        mode: input.mode ?? "COPILOT",
+        events: {
+          create: { type: "CREATED", payload: { portal: input.portal, mode: input.mode ?? "COPILOT" } },
+        },
       },
       select: { id: true, status: true },
     });
 
     await tx.auditLog.create({
       data: {
-        actor: "USER",
+        actor: input.mode === "AUTOPILOT" ? "SYSTEM" : "USER",
         action: "application.create",
         entityType: "Application",
         entityId: created.id,
-        payload: redactDeep({ jobId: input.jobId, portal: input.portal }) as object,
+        payload: redactDeep({
+          jobId: input.jobId,
+          portal: input.portal,
+          mode: input.mode ?? "COPILOT",
+        }) as object,
       },
     });
 
@@ -732,4 +739,93 @@ export async function deleteAnswer(input: { userId: string; id: string }): Promi
     });
   }, TX_OPTIONS);
   return true;
+}
+
+export interface SubmissionCounts {
+  total: number;
+  byPortal: Record<string, number>;
+  lastByPortal: Record<string, Date | undefined>;
+}
+
+/**
+ * Caps are counted from stored submissions, not from memory, so a restart or a
+ * second process cannot reset the budget (gate 7.3).
+ */
+export async function submissionCounts(input: {
+  since: Date;
+}): Promise<SubmissionCounts> {
+  const rows = await prisma.application.findMany({
+    where: { status: "SUBMITTED", submittedAt: { gte: input.since } },
+    select: { portal: true, submittedAt: true },
+  });
+
+  const byPortal: Record<string, number> = {};
+  const lastByPortal: Record<string, Date | undefined> = {};
+  let total = 0;
+
+  for (const row of rows) {
+    total += 1;
+    byPortal[row.portal] = (byPortal[row.portal] ?? 0) + 1;
+    const at = row.submittedAt ?? undefined;
+    if (at) {
+      const previous = lastByPortal[row.portal];
+      if (!previous || at > previous) lastByPortal[row.portal] = at;
+    }
+  }
+
+  return { total, byPortal, lastByPortal };
+}
+
+/** Bytes of a stored document, scoped to its owner, for attaching to a form. */
+export async function readDocumentBytes(input: {
+  id: string;
+  userId: string;
+}): Promise<{ bytes: Buffer; format: string } | null> {
+  const document = await prisma.document.findFirst({
+    where: { id: input.id, userId: input.userId },
+    select: { content: true, format: true },
+  });
+  if (!document) return null;
+  return { bytes: Buffer.from(document.content, "base64"), format: document.format };
+}
+
+/**
+ * Unlocks (mode AUTOPILOT) or locks one portal in Settings.perPortalMode. The
+ * JSON merge is transactional with the `portal.unlock`/`portal.lock` audit row,
+ * so a policy can never change without the record of who changed it (gate 7.5).
+ */
+export async function setPortalPolicy(input: {
+  userId: string;
+  portal: string;
+  mode: "AUTOPILOT" | "COPILOT";
+}): Promise<Record<string, unknown>> {
+  return prisma.$transaction(async (tx) => {
+    const settings = await tx.settings.upsert({
+      where: { userId: input.userId },
+      update: {},
+      create: { userId: input.userId },
+    });
+    const current = (settings.perPortalMode ?? {}) as Record<string, unknown>;
+    const next: Record<string, unknown> = { ...current };
+    if (input.mode === "AUTOPILOT") {
+      next[input.portal] = { mode: "AUTOPILOT", unlockedAt: new Date().toISOString() };
+    } else {
+      delete next[input.portal];
+    }
+
+    await tx.settings.update({
+      where: { userId: input.userId },
+      data: { perPortalMode: next as Prisma.InputJsonValue },
+    });
+    await tx.auditLog.create({
+      data: {
+        actor: "USER",
+        action: input.mode === "AUTOPILOT" ? "portal.unlock" : "portal.lock",
+        entityType: "Settings",
+        entityId: input.userId,
+        payload: { portal: input.portal, mode: input.mode },
+      },
+    });
+    return next;
+  }, TX_OPTIONS);
 }
