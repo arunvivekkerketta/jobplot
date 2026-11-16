@@ -62,7 +62,8 @@ machine keeps a cluster in `.pgdata` (gitignored, port 55432) started with:
 | `pnpm build` | Build all packages and apps |
 | `pnpm lint` | ESLint across the workspace |
 | `pnpm typecheck` | `tsc --noEmit` in every package |
-| `pnpm test` | vitest unit tests (core, llm, db, render, sources) |
+| `pnpm test` | vitest unit tests (core, llm, db, render, sources, web) |
+| `pnpm test:integration` | Gate 2.4 against `<your database>_e2e` |
 | `pnpm e2e` | Playwright against its own database on :3100 |
 | `pnpm db:migrate` | Apply committed Prisma migrations |
 | `pnpm db:seed` | Upsert the admin user and default Settings |
@@ -76,6 +77,14 @@ and every other counter start at zero and the suite is repeatable. Set
 `E2E_DATABASE_URL` to point the suite at a different database, or `MOCK_ATS_URL`
 if the mock ATS is not on :4600. The mock ATS is started (or reused) by the same
 config.
+
+The gate 2.4 test (`packages/autopilot/test/tempdir.integration.test.ts`) keeps a
+real database and mocks only `playwright`, so it skips itself unless `DATABASE_URL`
+names an `_e2e` database — that guard is what stops it writing rows into your own
+data. `pnpm test:integration` is the way to run it: it creates `<database>_e2e` if
+missing, applies the committed migrations, runs the test there, and exits non-zero
+if the suite skipped instead of running, so a skipped proof cannot be mistaken for
+a green one. CI runs the same command in the `checks` job.
 
 GitHub Actions runs the same gates on every push to `main` and every pull request
 (`.github/workflows/ci.yml`): a `pgvector/pgvector:pg16` service container, a

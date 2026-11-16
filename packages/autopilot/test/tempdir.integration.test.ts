@@ -8,7 +8,13 @@ import fixture from "../../../fixtures/sample-resume.json";
  *
  * The unit test next door mocks `@jobpilot/db`; this one keeps the database real
  * and mocks only `playwright`, so the run goes through the actual claim, resume
- * staging, release and audit code paths. Point it at the e2e database:
+ * staging, release and audit code paths. Run it with:
+ *
+ *   pnpm test:integration
+ *
+ * which creates `<database>_e2e`, applies the committed migrations, runs this file
+ * against it and exits non-zero if the suite skipped. The direct form, when that
+ * database already exists:
  *
  *   DATABASE_URL=postgresql://jobpilot:jobpilot@127.0.0.1:55432/jobpilot_e2e \
  *     pnpm --filter @jobpilot/autopilot exec vitest run test/tempdir.integration.test.ts

@@ -67,6 +67,14 @@ jobs:
 
       # Gate 1.7b without Docker: the compose file must refuse to start without
       # the four secrets, and the checker must be able to fail (--self-test).
+      # Gate 2.4's real-database proof. That test skips itself unless
+      # DATABASE_URL names the e2e database, so this script creates
+      # `<database>_e2e`, migrates it and fails when the suite reported a skip —
+      # a skip is not a pass. It is a separate step because `pnpm test` must keep
+      # skipping it: unit tests never write to a shared database.
+      - name: Gate 2.4 real-database test
+        run: pnpm test:integration
+
       - name: Compose secret audit
         run: pnpm check:compose
 

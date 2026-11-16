@@ -2420,3 +2420,72 @@ session check off    → 2 failed | 12 passed   (the two no-session cases)
   sign-in path itself is covered by the e2e suite.
 - The guard is exercised through a `Request`, not through a route handler, so a route that forgets
   to call the guard is still only caught by the e2e suite and by review.
+
+## Phase 22 — gate 2.4's real-database proof is now actually run
+
+The gate 2.4 test keeps a real database and mocks only `playwright`, and it skips itself unless
+`DATABASE_URL` names an `_e2e` database — that guard is what keeps `pnpm test` from writing rows
+into a developer's data, but it also meant nothing in the default pipeline ran it. A skipped test
+exits 0, so the gate could look green while proving nothing.
+
+`scripts/gate24-integration.mjs` (`pnpm test:integration`) is the documented way to run it, and
+the CI `checks` job runs the same command:
+
+1. derives `<database>_e2e` from `DATABASE_URL` with the same helper Playwright uses
+   (`apps/web/scripts/e2e-env.mjs`), so the two never disagree about which database that is;
+2. creates it when missing (`CREATE DATABASE` has no `IF NOT EXISTS`; only "already exists" is
+   tolerated) and **never drops it**, so it cannot disturb a concurrent `pnpm e2e` run;
+3. applies the committed migrations to it;
+4. runs the single test there and reads vitest's JSON report: if the suite reported **any** skip,
+   the script exits 1 with "the suite did not run … Gate 2.4 is unproven".
+
+| Gate | Sub-Task Name | Observable Outcome | Expected Proof | Status |
+| --- | --- | --- | --- | --- |
+| 22a | A documented command runs the proof | `pnpm test:integration` creates/migrates `<db>_e2e`, runs the test and reports `1/1 passed` | script output below | [MET] |
+| 22b | A skip cannot pass as a proof | forcing the test's database guard to reject the e2e name makes the script exit **1**, not 0 | negative control below | [MET] |
+| 22c | CI runs it | `.github/workflows/ci.yml` `checks` job has a `Gate 2.4 real-database test` step running the same command | `grep -n test:integration .github/workflows/ci.yml` → line 76; `ci.yml parses` | [MET] |
+| 22d | The suite is still honest | `pnpm test` still skips it (no shared-database writes in unit tests), and the e2e suite is untouched | `pnpm test` → autopilot `19 passed | 1 skipped` | [MET] |
+
+### Evidence
+
+```
+$ pnpm test:integration
+[gate24] creating jobpilot_e2e if missing … ok
+[gate24] applying migrations … ok
+[gate24] running the real-database test against postgresql://jobpilot:***@localhost:55432/jobpilot_e2e
+
+ ✓ test/tempdir.integration.test.ts (1 test) 2529ms
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+[gate24] gate 2.4 exercised against the e2e database: 1/1 passed
+SCRIPT_EXIT_ON_PASS=0
+
+# negative control: the test's guard changed to reject jobpilot_e2e
+ ↓ test/tempdir.integration.test.ts (1 test | 1 skipped)
+      Tests  1 skipped (1)
+[gate24] FAILED: the suite did not run (total 1, skipped 1). Gate 2.4 is unproven;
+the test's e2e-database guard is what skipped it.
+SCRIPT_EXIT_ON_SKIP=1
+
+$ pnpm lint      → exit 0
+$ pnpm typecheck → exit 0
+$ pnpm test      → 276 passed, 1 skipped (autopilot 19 + 1 skipped)
+$ python -c "yaml.safe_load(ci.yml)" → ci.yml parses
+```
+
+Walkthrough: the pass case shows the three setup steps and the real vitest output for the
+database-backed test, then the script's own summary; the negative control shows the same script
+reporting the skip and failing with exit 1, which is the whole point — the gate is now either
+exercised or red.
+
+### Deviations and limits
+
+- The script does not provision Postgres. It expects `DATABASE_URL` to point at a reachable server
+  (CI's service container, or the local 55432 instance) and says so plainly when it does not.
+- It applies migrations with `migrate deploy` and leaves the database in place rather than
+  resetting it, unlike `apps/web/scripts/e2e-db.mjs`: an integration run must not race an e2e run
+  that is resetting the same database, and gate 2.4 only reads and writes its own `stamp` rows.
+- `shell: true` for the pnpm child processes raises Node's DEP0190 deprecation warning; the
+  existing `e2e-db.mjs` does the same, since `pnpm` is a `.cmd` shim on Windows.
+- The CI step is unproven here: this machine has no Docker and no GitHub runner, so the workflow
+  was validated by parsing the YAML and by running the identical command locally.
