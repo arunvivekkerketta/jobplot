@@ -15,7 +15,7 @@ import {
   type PageLike,
   type SkippedCandidate,
 } from "@jobpilot/apply";
-import { startOfDayInZone, type JsonResumeProfile } from "@jobpilot/core";
+import { startOfDayInZone, type JsonResumeProfile, type NotifyInput } from "@jobpilot/core";
 import { notifyHumanNeeded } from "./notify.js";
 import {
   approvedCoPilotByPortal,
@@ -443,6 +443,9 @@ export async function runAutopilotNow(
     }
 
     try {
+      // Webhook deliveries are queued here and sent once the batch is over: a slow
+      // or unreachable webhook must not stretch the gap between two applications.
+      const notifications: NotifyInput[] = [];
       const report = await runAutopilot({
         targets: claimed.map((candidate) => ({
           jobId: candidate.jobId,
@@ -506,26 +509,31 @@ export async function runAutopilotNow(
           // Anything a human must finish is announced, with codes only (I5/I7).
           if (outcome.status !== "SUBMITTED") {
             const candidate = claimed.find((entry) => entry.jobId === outcome.jobId);
-            await notifyHumanNeeded(
-              {
-                title: candidate?.title ?? "Application",
-                portal: candidate?.portal ?? "unknown",
-                reason: outcome.reason ?? outcome.status,
-              },
-              {
-                audit: async (payload) =>
-                  writeAudit({
-                    actor: "SYSTEM",
-                    action: "autopilot.notify",
-                    entityType: "Settings",
-                    entityId: userId,
-                    payload,
-                  }),
-              },
-            );
+            notifications.push({
+              title: candidate?.title ?? "Application",
+              portal: candidate?.portal ?? "unknown",
+              reason: outcome.reason ?? outcome.status,
+            });
           }
         },
       });
+
+      // Delivered together, and only now: the first one may already be slow while
+      // the run is finished, instead of inside the loop that drives the browser.
+      await Promise.allSettled(
+        notifications.map((input) =>
+          notifyHumanNeeded(input, {
+            audit: async (payload) =>
+              writeAudit({
+                actor: "SYSTEM",
+                action: "autopilot.notify",
+                entityType: "Settings",
+                entityId: userId,
+                payload,
+              }),
+          }),
+        ),
+      );
 
       const submitted = report.outcomes.filter((outcome) => outcome.status === "SUBMITTED").length;
       const paused = report.outcomes.length - submitted;

@@ -1751,8 +1751,8 @@ plain anchor to `#main`.
 | Task | What it asks | What exists now | Evidence | Status |
 | --- | --- | --- | --- | --- |
 | 4.1 | An Applications page after the phase 4 flow | `/applications` with per-status counters, a labelled status filter (`?status=`, plain GET form), one row per application and an expandable action log; `GET /api/applications?status=` rejects an unknown status with 422 and keeps `events` as a count so earlier specs stay valid | phase4 e2e asserts a row with `data-status="SUBMITTED"` and a non-zero Submitted counter | [MET] |
-| 4.3 | Skill-gap report plus project ideas | `extractGap` counts each keyword once per posting and asks the Fact Index whether the profile can prove it; `suggestProjects` returns 4–6 step ideas from a fixed table with a generic fallback. `POST /api/gaps` saves a `GapReport`; `/skills` renders have/missing/ideas | `packages/core/test/gap.test.ts` (5 cases) + `/skills` e2e | [MET] |
-| 4.5 | Tell the user when a human is needed | `formatHumanNeeded` in core; `notifyHumanNeeded` posts codes-only text to an https webhook only, 5 s timeout, every attempt audited as `autopilot.notify`; wired into the Auto-Pilot outcome handler for every non-SUBMITTED outcome | `packages/autopilot/test/notify.test.ts` (4 cases: delivered, http refused, not configured, network failure) | [MET] |
+| 4.3 | Skill-gap report plus project ideas | `extractGap` counts each keyword once per posting and asks the Fact Index whether the profile can prove it; `suggestProjects` returns 4–6 step ideas from a fixed table with a generic fallback. `POST /api/gaps` and `/skills` share one `loadGap` computation (`apps/web/src/lib/gap.ts`), so the saved report and the rendered page cannot disagree; `/skills` renders have/missing/ideas | `packages/core/test/gap.test.ts` (5 cases) + `/skills` e2e | [MET] |
+| 4.5 | Tell the user when a human is needed | `formatHumanNeeded` in core; `notifyHumanNeeded` posts codes-only text to an https webhook only, 5 s timeout, every attempt audited as `autopilot.notify`; every non-SUBMITTED outcome is queued in the Auto-Pilot outcome handler and the queue is delivered after the batch, so a slow webhook cannot delay the next posting | `packages/autopilot/test/notify.test.ts` (4 cases: delivered, http refused, not configured, network failure) | [MET] |
 | 4.2 | Earned Auto-Pilot trust ladder | not started | — | [PENDING] |
 | 4.4 | Cover letter, cold email, offer letters | not started | — | [PENDING] |
 | 4.6 | Background "Run" via a queue | not started, needs a decision (see below) | — | [PENDING] |
@@ -2069,3 +2069,44 @@ pnpm e2e       → 37 passed (4.1m)
 
 The e2e run covers the parts this touched: the skip link and `aria-current` (phase9), the settings
 save and the empty-cap error (phase8/phase9), and the applications table (phase4).
+
+## Review pass — Stage 4, with fresh eyes
+
+Three things did not earn their complexity, and one was a real stall.
+
+| Finding | What changed |
+| --- | --- |
+| The gap report was computed twice | `POST /api/gaps` and `/skills` each fetched the profile, fetched the same 20 `MatchScore` rows, built the Fact Index and ran `extractGap` + `suggestProjects`. Both now call `loadGap(userId)` in `apps/web/src/lib/gap.ts`, so the API can no longer save a report the page disagrees with. |
+| The route re-scanned parsed data to find which postings mentioned a keyword | It built a `Map<jobId, keywords>` and, per keyword, filtered every entry — quadratic, and a second parser of `parsed.keywords`. `extractGap` already visits those postings, so `GapEntry` now carries `jobIds`; the route reads it. The cast to `{ keywords: string[] }` is gone. |
+| `POST /api/gaps` had a request body nothing sent | A zod `jobIds` schema, a `req.json()` try/catch and a 422 branch existed for a filter with no caller (`grep -rn "api/gaps"` finds only generated route types). All three removed; the route now takes no body and reports on the same postings the page does. |
+| Severity thresholds were unreadable | `jobsMentioning * 3 >= postings * 2` became a share comparison in `gapSeverity` — same boundaries (2/3 high, 1/3 medium), read as what they mean. |
+| **The webhook was awaited inside the run loop** | `onOutcome` sat inside `runAutopilot`'s per-posting loop and awaited `notifyHumanNeeded`, i.e. up to a 5 s timeout plus a socket, *between* two applications. Every `HUMAN_NEEDED` outcome delayed the next posting — real, and it eats the per-domain pacing budget. Stops are now queued in `onOutcome` and flushed after the batch with `Promise.allSettled`, so N stops cost one round trip and none of them sit in the loop. |
+
+### Measuring the stall
+
+`packages/autopilot/test/notify.test.ts` gained two cases. The first one started as a bug in the
+test and turned into the measurement: a fake fetch that ignores the abort signal ran the full
+**5008 ms** default timeout, which is exactly what one hung delivery used to cost the loop. With the
+fake honouring the signal (as real `fetch` does), the same stall ends in **102 ms** at
+`timeoutMs: 100`:
+
+```
+ ✓ gives up inside the timeout when the webhook never answers 102ms
+ ✓ delivers a batch in one round trip, not one per posting 158ms
+```
+
+Three concurrent deliveries at 150 ms each finish in 158 ms; delivered one at a time they would take
+about 450 ms.
+
+### Evidence
+
+```
+pnpm typecheck → exit 0
+pnpm lint      → exit 0
+pnpm test      → 251 passed, 1 skipped
+pnpm e2e       → 37 passed (4.2m)
+```
+
+Honest limit: the run-loop improvement is reasoned from the code and measured on the delivery call
+itself, not end to end — the e2e suite has no scenario with two paused applications and a slow
+webhook, so the wall-clock difference inside a real batch was not observed.

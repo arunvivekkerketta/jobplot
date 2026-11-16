@@ -10,6 +10,8 @@ export interface GapJob {
 export interface GapEntry {
   keyword: string;
   jobsMentioning: number;
+  /** The postings that mentioned it, so callers never re-scan parsed data. */
+  jobIds: string[];
   haveIt: boolean;
 }
 
@@ -39,7 +41,7 @@ export function extractGap(
   index: FactIndex,
   topN = 20,
 ): GapEntry[] {
-  const counts = new Map<string, { keyword: string; jobsMentioning: number }>();
+  const counts = new Map<string, { keyword: string; jobIds: Set<string> }>();
 
   for (const job of jobs.slice(0, topN)) {
     const seen = new Set<string>();
@@ -50,15 +52,16 @@ export function extractGap(
       if (seen.has(key)) continue;
       seen.add(key);
       const existing = counts.get(key);
-      if (existing) existing.jobsMentioning += 1;
-      else counts.set(key, { keyword, jobsMentioning: 1 });
+      if (existing) existing.jobIds.add(job.id);
+      else counts.set(key, { keyword, jobIds: new Set([job.id]) });
     }
   }
 
   return [...counts.values()]
     .map((entry) => ({
       keyword: entry.keyword,
-      jobsMentioning: entry.jobsMentioning,
+      jobsMentioning: entry.jobIds.size,
+      jobIds: [...entry.jobIds],
       haveIt: index.hasSkill(entry.keyword),
     }))
     .sort(

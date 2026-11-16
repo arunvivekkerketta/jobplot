@@ -1,7 +1,6 @@
 import Link from "next/link";
-import { buildFactIndex, extractGap, suggestProjects } from "@jobpilot/core";
-import { prisma } from "@jobpilot/db";
 import { requireUser } from "@/lib/session";
+import { loadGap } from "@/lib/gap";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Skills" };
@@ -9,10 +8,7 @@ export const metadata = { title: "Skills" };
 export default async function SkillsPage() {
   const { userId } = await requireUser();
 
-  const profile = await prisma.profile.findUnique({
-    where: { userId },
-    select: { id: true, jsonResume: true },
-  });
+  const { profile, matches, gap, have, missing, projects } = await loadGap(userId);
 
   if (!profile) {
     return (
@@ -28,22 +24,6 @@ export default async function SkillsPage() {
       </div>
     );
   }
-
-  const matches = await prisma.matchScore.findMany({
-    where: { profileId: profile.id },
-    orderBy: [{ score: "desc" }, { id: "asc" }],
-    take: 20,
-    include: { job: { select: { id: true, title: true, parsed: true } } },
-  });
-
-  const index = buildFactIndex(profile.jsonResume as never);
-  const gap = extractGap(
-    matches.map((match) => match.job),
-    index,
-  );
-  const have = gap.filter((entry) => entry.haveIt);
-  const missing = gap.filter((entry) => !entry.haveIt);
-  const projects = suggestProjects(missing.map((entry) => entry.keyword));
 
   return (
     <div className="space-y-6" data-testid="skills-page">

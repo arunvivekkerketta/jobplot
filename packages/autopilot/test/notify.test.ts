@@ -56,6 +56,56 @@ describe("gate 4.5: a human-needed stop is announced once, with codes only (M6)"
     expect(rows.at(-1)).toMatchObject({ delivered: false, reason: "NOT_CONFIGURED" });
   });
 
+  it("gives up inside the timeout when the webhook never answers", async () => {
+    // A webhook that accepts the connection and then says nothing, like a real one
+    // whose socket stalls. The abort signal is what ends it, which is why an
+    // unreachable webhook costs one timeout and not the whole run.
+    const fetchImpl = ((_url: string, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+      })) as unknown as typeof fetch;
+    const { rows, audit } = collector();
+
+    const started = Date.now();
+    await notifyHumanNeeded(posting, {
+      fetchImpl,
+      url: "https://hooks.example.invalid/x",
+      audit,
+      timeoutMs: 100,
+    });
+    const elapsed = Date.now() - started;
+
+    expect(elapsed).toBeLessThan(1_000);
+    expect(rows.at(-1)).toMatchObject({ delivered: false, reason: "REQUEST_FAILED" });
+  });
+
+  it("delivers a batch in one round trip, not one per posting", async () => {
+    // This is the shape the Auto-Pilot run uses: every stop is queued during the
+    // batch and the queue is flushed together afterwards.
+    let inFlight = 0;
+    let peak = 0;
+    const fetchImpl = (async () => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      inFlight -= 1;
+      return new Response(null, { status: 204 });
+    }) as unknown as typeof fetch;
+    const { rows, audit } = collector();
+
+    const started = Date.now();
+    await Promise.all(
+      [1, 2, 3].map(() =>
+        notifyHumanNeeded(posting, { fetchImpl, url: "https://hooks.example.invalid/x", audit }),
+      ),
+    );
+    const elapsed = Date.now() - started;
+
+    expect(peak).toBe(3);
+    expect(rows).toHaveLength(3);
+    expect(elapsed).toBeLessThan(400); // one by one would be ~450ms
+  });
+
   it("records a failed delivery without throwing", async () => {
     const fetchImpl = (async () => {
       throw new Error("network down");
