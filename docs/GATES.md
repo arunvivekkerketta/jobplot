@@ -1995,3 +1995,50 @@ pnpm e2e       → 37 passed (4.1m)
 
 The e2e suite covers what the guard rewrite could break: 307 for unauthenticated reads, the
 foreign-origin 403, the replay 409 and the full Auto-Pilot and Co-Pilot flows.
+
+### Gate 2.4d — the same proof against a real database
+
+The unit test above mocks `@jobpilot/db`. `packages/autopilot/test/tempdir.integration.test.ts` keeps
+the database real (the e2e database) and mocks **only** `playwright`, so the claim, the resume
+staging, the release and the audit row are the real code paths, not doubles.
+
+```
+$ DATABASE_URL=postgresql://jobpilot:jobpilot@127.0.0.1:55432/jobpilot_e2e \
+    pnpm --filter @jobpilot/autopilot exec vitest run test/tempdir.integration.test.ts --reporter=verbose
+ ✓ test/tempdir.integration.test.ts > gate 2.4: a failed real run leaves no temp directory > removes the run directory and releases the claim when Playwright cannot be imported 40ms
+      Tests  1 passed (1)
+INT=0
+```
+
+What it sets up in `jobpilot_e2e`, all through Prisma: a user, a profile from
+`fixtures/sample-resume.json`, a posting on a **unique portal** (`gate24-<timestamp>`, so this
+database's existing submissions and per-domain spacing cannot interfere), a `MatchScore` of 92, an
+approved `ResumeVersion` whose `pdfPath` points at a real `Document` holding `%PDF-1.4 …` bytes,
+and `Settings` with `allowSubmit: true`, `killSwitch: false` and that portal unlocked.
+
+Then it runs `runAutopilotNow(userId, { jobIds: [jobId], limit: 1 })` with the Playwright import
+mocked to throw, and asserts:
+- the promise rejects with `BrowserUnavailableError`;
+- exactly one run directory was created, it **existed at the moment of the throw** (`existedAtThrow`),
+  and `fs.existsSync` is false afterwards;
+- the database row is back to `status: "QUEUED"` with `claimedAt: null`, so the posting is retryable;
+- an `autopilot.unavailable` audit row exists for the user (I8).
+
+Cleanup is part of the test: the run is gone from the database afterwards, checked independently
+with psql (`User` rows like `gate24-%`, `Job` rows with a `gate24-%` source):
+
+```
+$ psql …jobpilot_e2e -tAc "select (select count(*) from \"User\" where email like 'gate24-%'), (select count(*) from \"Job\" where source like 'gate24-%')"
+0|0
+```
+
+The file skips itself — and prints why — when `DATABASE_URL` does not name the e2e database, so a
+plain `pnpm test` cannot write into a developer's own data:
+
+```
+@jobpilot/autopilot:test: gate 2.4 integration test skipped: set DATABASE_URL to the jobpilot_e2e database to run it
+@jobpilot/autopilot:test:  ↓ test/tempdir.integration.test.ts (1 test | 1 skipped)
+@jobpilot/autopilot:test:       Tests  11 passed | 1 skipped (12)
+```
+
+`pnpm lint` → exit 0 (no warnings); `pnpm typecheck` → exit 0.
