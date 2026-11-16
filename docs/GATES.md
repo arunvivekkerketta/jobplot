@@ -1963,3 +1963,35 @@ reconstructed guess.
   database behaviour around it (that is covered by the db suite and by the e2e runs).
 - The success path's cleanup was already exercised end to end by phase7/phase8 runs; this test
   adds only the missing failure path.
+
+## Review pass — Stage 1 and Stage 2, with fresh eyes
+
+No gate changed; this is a cleanup with three fixes and one finding that needs a decision.
+
+### What was simplified
+
+| Change | Why |
+| --- | --- |
+| Every route now uses one guard (`requireUserRequest`) | Eight GET handlers still carried their own `await auth()` + 401 preamble while mutations used the guard. `requireUserRequest` already skips the origin and content-type rules for a read, so the second idiom was pure duplication. Now every route file except `api/auth/[...nextauth]` calls the same three lines, and `lib/guard.ts` says what it covers. |
+| `runAutopilotNow` de-duplicated | Two near-identical `catch` blocks (missing runtime, failed launch) collapsed into one `browserFailure(error, message)` that releases the claims, writes the audit row and returns the typed error; the two user-facing messages are unchanged. |
+| The resume-staging loop moved into the run's `try` | It sat between `try {` and the browser blocks with its indentation lost in the Stage 1 edits, which hid how deep the nesting had grown. The body is now three steps: stage files, start browser, run. |
+| `beforeSubmit` re-reads `allowSubmit` too | It only checked `killSwitch`. Turning submissions off mid-run stopped the *next* posting but let a filled form send, while the Co-Pilot approval path already checked both (I3/I4). |
+| `LOGIN_FAILURE_WINDOW_MINUTES` is used | It was exported by `auth-policy.ts` and `auth.ts` hardcoded `15`, so changing the policy constant did nothing. |
+
+### Scoping audit (the thing that could have been lost in Stage 2)
+
+- All 15 mutating handlers (`POST`/`PUT`/`DELETE`) call the guard; after this pass every `GET` does too. Checked file by file, not by grep alone.
+- Owner-scoped reads and writes, confirmed in place: `documents/[id]` (`where: { id, userId }`), `resume-versions` GET (via `profile.userId`), `resume-versions/[id]/approve` (profile ownership before approving), `answers` GET/POST/DELETE (`userId`), `settings`, `autopilot`, `gaps`, `letters`, `matches` (profile), `profile/import` (`userId`), `applications` POST (resume document must be the caller's own PDF).
+- **Finding, not fixed:** `applications/[id]/result` and `applications/[id]/approve` load the row by id alone, because `Application` has no owner column (`jobId` is unique and postings are global). "Single-user by design" makes that correct for this deployment, but on a multi-tenant one user B could report a result for, or approve, user A's application. Fixing it means `Application.userId` plus a migration and a backfill — a schema decision, so it is recorded here rather than changed silently.
+
+### Evidence
+
+```
+pnpm lint      → exit 0
+pnpm typecheck → exit 0
+pnpm test      → 249 passed (core 50, render 25, llm 42, sources 34, apply 65, autopilot 11, db 22)
+pnpm e2e       → 37 passed (4.1m)
+```
+
+The e2e suite covers what the guard rewrite could break: 307 for unauthenticated reads, the
+foreign-origin 403, the replay 409 and the full Auto-Pilot and Co-Pilot flows.

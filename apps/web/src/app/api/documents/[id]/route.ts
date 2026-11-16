@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { requireUserRequest } from "@/lib/guard";
 import { prisma } from "@jobpilot/db";
 
 const CONTENT_TYPES: Record<string, string> = {
@@ -12,11 +12,9 @@ export async function GET(
   req: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  const session = await auth();
-  const userId = session?.user?.id;
-  if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const guarded = await requireUserRequest(req);
+  if (guarded instanceof Response) return guarded;
+  const { userId } = guarded;
 
   const { id } = await context.params;
   // Scope by userId: a document id alone must never grant access (I7).

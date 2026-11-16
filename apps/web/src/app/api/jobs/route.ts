@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/auth";
 import { prisma, saveJobs } from "@jobpilot/db";
 import { parseManualPosting } from "@jobpilot/sources";
 import { requireUserRequest } from "@/lib/guard";
@@ -18,11 +17,9 @@ const manualJobInput = z.object({
   postedAt: z.string().optional(),
 });
 
-export async function GET() {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+export async function GET(req: Request) {
+  const guarded = await requireUserRequest(req);
+  if (guarded instanceof Response) return guarded;
 
   const jobs = await prisma.job.findMany({
     orderBy: { fetchedAt: "desc" },

@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/auth";
 import { prisma, writeAudit } from "@jobpilot/db";
 import {
   BrowserUnavailableError,
@@ -27,10 +26,10 @@ const actionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("tick") }),
 ]);
 
-export async function GET() {
-  const session = await auth();
-  const userId = session?.user?.id;
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+export async function GET(req: Request) {
+  const guarded = await requireUserRequest(req);
+  if (guarded instanceof Response) return guarded;
+  const { userId } = guarded;
 
   const status = await loadAutopilotStatus(userId);
   return NextResponse.json(status, { headers: { "Cache-Control": "private, no-store" } });

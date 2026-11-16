@@ -3,8 +3,9 @@ import { auth } from "@/auth";
 import { isSameOriginRequest } from "@/lib/origin";
 
 /**
- * One guard for every state-changing route: a session, a same-origin request and
- * a JSON body. Centralising it means a new route cannot silently ship without the
+ * The one entry point for every route that needs a session: a same-origin request
+ * and a JSON body are required for a mutation, while a read only needs the
+ * session. Centralising it means a new route cannot silently ship without the
  * cross-site check that only the Auto-Pilot route used to have (M1).
  */
 export async function requireUserRequest(

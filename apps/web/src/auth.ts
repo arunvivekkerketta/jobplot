@@ -1,6 +1,6 @@
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
-import { isLoginLocked } from "@jobpilot/core";
+import { isLoginLocked, LOGIN_FAILURE_WINDOW_MINUTES } from "@jobpilot/core";
 import {
   hashPassword,
   prisma,
@@ -40,7 +40,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
         // Too many recent failures: refuse without touching the password, so the
         // response cannot be used as a fast oracle (M7).
-        if (isLoginLocked(await recentFailedLogins(email, 15))) return null;
+        // The window and the limit live in core, so the policy has one source.
+        if (
+          isLoginLocked(
+            await recentFailedLogins(email, LOGIN_FAILURE_WINDOW_MINUTES),
+          )
+        ) {
+          return null;
+        }
 
         const user = await prisma.user.findUnique({ where: { email } });
         const hash = user?.passwordHash ?? (await dummyHash);

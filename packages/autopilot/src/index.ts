@@ -389,164 +389,169 @@ export async function runAutopilotNow(
     for (const id of claimedIds) await releaseApplication(id);
   };
 
+  /** One exit for both browser failures: give the claims back, audit, then throw. */
+  const browserFailure = async (error: unknown, message: string): Promise<Error> => {
+    await releaseClaims();
+    await writeAudit({
+      actor: "SYSTEM",
+      action: "autopilot.unavailable",
+      entityType: "Settings",
+      entityId: userId,
+      payload: { message: error instanceof Error ? error.message : "browser unavailable" },
+    });
+    return new BrowserUnavailableError(message);
+  };
+
   const answers = await listAnswers(userId);
   // One directory per run, readable only by this account and deleted on every
   // exit path, including a browser that never starts (M5).
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobpilot-"));
   fs.chmodSync(tempDir, 0o700);
-  const resumePaths = new Map<string, string>();
-  try {
-  for (const candidate of claimed) {
-    const pdfPath = candidate.pdfPath;
-    if (!pdfPath) continue;
-    const documentId = pdfPath.split("/").pop();
-    if (!documentId) continue;
-    const stored = await readDocumentBytes({ id: documentId, userId });
-    if (!stored) continue;
-    const file = path.join(tempDir, `${randomUUID()}.pdf`);
-    fs.writeFileSync(file, stored.bytes, { mode: 0o600 });
-    resumePaths.set(candidate.jobId, file);
-  }
 
-  let chromium: typeof import("playwright").chromium;
   try {
-    ({ chromium } = await import("playwright"));
-  } catch (error) {
-    // Nothing was applied, so the claims must not lock these postings out.
-    await releaseClaims();
-    await writeAudit({
-      actor: "SYSTEM",
-      action: "autopilot.unavailable",
-      entityType: "Settings",
-      entityId: userId,
-      payload: { message: error instanceof Error ? error.message : "playwright missing" },
-    });
-    throw new BrowserUnavailableError(
-      "The browser runtime is not installed, so Auto-Pilot cannot run.",
-    );
-  }
+    // The approved resume is copied beside the run so the form can attach a file;
+    // the copy is private to this account and removed by the outer finally.
+    const resumePaths = new Map<string, string>();
+    for (const candidate of claimed) {
+      const documentId = candidate.pdfPath?.split("/").pop();
+      if (!documentId) continue;
+      const stored = await readDocumentBytes({ id: documentId, userId });
+      if (!stored) continue;
+      const file = path.join(tempDir, `${randomUUID()}.pdf`);
+      fs.writeFileSync(file, stored.bytes, { mode: 0o600 });
+      resumePaths.set(candidate.jobId, file);
+    }
 
-  let browser: Awaited<ReturnType<typeof chromium.launch>>;
-  try {
-    browser = await chromium.launch();
-  } catch (error) {
-    await releaseClaims();
-    await writeAudit({
-      actor: "SYSTEM",
-      action: "autopilot.unavailable",
-      entityType: "Settings",
-      entityId: userId,
-      payload: { message: error instanceof Error ? error.message : "browser launch failed" },
-    });
-    throw new BrowserUnavailableError(
-      "The browser could not be started, so Auto-Pilot cannot run.",
-    );
-  }
-  try {
-    const report = await runAutopilot({
-      targets: claimed.map((candidate) => ({
-        jobId: candidate.jobId,
-        portal: candidate.portal,
-        url: candidate.url,
-        ...(resumePaths.has(candidate.jobId)
-          ? { resumePath: resumePaths.get(candidate.jobId)! }
-          : {}),
-      })),
-      openPage: async () => {
-        const page = await browser.newPage();
-        const runtime = playwrightPage(page as unknown as PageLike);
-        return {
-          ...runtime,
-          close: async () => {
-            await page.close();
-          },
-        };
-      },
-      profile: profile.jsonResume as unknown as JsonResumeProfile,
-      answers,
-      maxApplications: limit,
-      // Re-read from the database before every posting: the kill switch and the
-      // caps must act on the run that is happening now, not on the snapshot taken
-      // when the batch started (I4).
-      preflightFor: async (target) => {
-        const fresh = await settingsFor(userId);
-        const today = await submissionCounts({ since: startOfToday() });
-        const last = today.lastByPortal[target.portal];
-        return {
-          settings: {
-            killSwitch: fresh.killSwitch,
-            allowSubmit: fresh.allowSubmit,
-            dailyCap: fresh.dailyCap,
-            mode: fresh.mode,
-          },
-          submissionsToday: today.total,
-          perPortalSubmissionsToday: today.byPortal[target.portal] ?? 0,
-          ...(last ? { lastActionAt: last } : {}),
-          now: new Date(),
-        };
-      },
-      // Last chance to stop: the form is filled but nothing has been sent.
-      beforeSubmit: async () => !(await settingsFor(userId)).killSwitch,
-      onOutcome: async (outcome) => {
-        const applicationId = applicationIds.get(outcome.jobId);
-        if (!applicationId) return;
-        await recordApplicationResult({
-          applicationId,
-          status: outcome.status,
-          actions: outcome.actions,
-          ...(outcome.reason ? { reason: outcome.reason } : {}),
-          ...(outcome.submissionText ? { submissionText: outcome.submissionText } : {}),
-        });
+    let chromium: typeof import("playwright").chromium;
+    try {
+      ({ chromium } = await import("playwright"));
+    } catch (error) {
+      throw await browserFailure(
+        error,
+        "The browser runtime is not installed, so Auto-Pilot cannot run.",
+      );
+    }
 
-        // Anything a human must finish is announced, with codes only (I5/I7).
-        if (outcome.status !== "SUBMITTED") {
-          const candidate = claimed.find((entry) => entry.jobId === outcome.jobId);
-          await notifyHumanNeeded(
-            {
-              title: candidate?.title ?? "Application",
-              portal: candidate?.portal ?? "unknown",
-              reason: outcome.reason ?? outcome.status,
+    let browser: Awaited<ReturnType<typeof chromium.launch>>;
+    try {
+      browser = await chromium.launch();
+    } catch (error) {
+      throw await browserFailure(
+        error,
+        "The browser could not be started, so Auto-Pilot cannot run.",
+      );
+    }
+
+    try {
+      const report = await runAutopilot({
+        targets: claimed.map((candidate) => ({
+          jobId: candidate.jobId,
+          portal: candidate.portal,
+          url: candidate.url,
+          ...(resumePaths.has(candidate.jobId)
+            ? { resumePath: resumePaths.get(candidate.jobId)! }
+            : {}),
+        })),
+        openPage: async () => {
+          const page = await browser.newPage();
+          const runtime = playwrightPage(page as unknown as PageLike);
+          return {
+            ...runtime,
+            close: async () => {
+              await page.close();
             },
-            {
-              audit: async (payload) =>
-                writeAudit({
-                  actor: "SYSTEM",
-                  action: "autopilot.notify",
-                  entityType: "Settings",
-                  entityId: userId,
-                  payload,
-                }),
+          };
+        },
+        profile: profile.jsonResume as unknown as JsonResumeProfile,
+        answers,
+        maxApplications: limit,
+        // Re-read from the database before every posting: the kill switch and the
+        // caps must act on the run that is happening now, not on the snapshot taken
+        // when the batch started (I4).
+        preflightFor: async (target) => {
+          const fresh = await settingsFor(userId);
+          const today = await submissionCounts({ since: startOfToday() });
+          const last = today.lastByPortal[target.portal];
+          return {
+            settings: {
+              killSwitch: fresh.killSwitch,
+              allowSubmit: fresh.allowSubmit,
+              dailyCap: fresh.dailyCap,
+              mode: fresh.mode,
             },
-          );
-        }
-      },
-    });
+            submissionsToday: today.total,
+            perPortalSubmissionsToday: today.byPortal[target.portal] ?? 0,
+            ...(last ? { lastActionAt: last } : {}),
+            now: new Date(),
+          };
+        },
+        // Last chance to stop: the form is filled but nothing has been sent. Both
+        // switches are read again, so turning submissions off mid-run stops it too
+        // (I3/I4).
+        beforeSubmit: async () => {
+          const fresh = await settingsFor(userId);
+          return !fresh.killSwitch && fresh.allowSubmit;
+        },
+        onOutcome: async (outcome) => {
+          const applicationId = applicationIds.get(outcome.jobId);
+          if (!applicationId) return;
+          await recordApplicationResult({
+            applicationId,
+            status: outcome.status,
+            actions: outcome.actions,
+            ...(outcome.reason ? { reason: outcome.reason } : {}),
+            ...(outcome.submissionText ? { submissionText: outcome.submissionText } : {}),
+          });
 
-    const submitted = report.outcomes.filter((outcome) => outcome.status === "SUBMITTED").length;
-    const paused = report.outcomes.length - submitted;
+          // Anything a human must finish is announced, with codes only (I5/I7).
+          if (outcome.status !== "SUBMITTED") {
+            const candidate = claimed.find((entry) => entry.jobId === outcome.jobId);
+            await notifyHumanNeeded(
+              {
+                title: candidate?.title ?? "Application",
+                portal: candidate?.portal ?? "unknown",
+                reason: outcome.reason ?? outcome.status,
+              },
+              {
+                audit: async (payload) =>
+                  writeAudit({
+                    actor: "SYSTEM",
+                    action: "autopilot.notify",
+                    entityType: "Settings",
+                    entityId: userId,
+                    payload,
+                  }),
+              },
+            );
+          }
+        },
+      });
 
-    await writeAudit({
-      actor: "SYSTEM",
-      action: "autopilot.run",
-      entityType: "Settings",
-      entityId: userId,
-      payload: {
+      const submitted = report.outcomes.filter((outcome) => outcome.status === "SUBMITTED").length;
+      const paused = report.outcomes.length - submitted;
+
+      await writeAudit({
+        actor: "SYSTEM",
+        action: "autopilot.run",
+        entityType: "Settings",
+        entityId: userId,
+        payload: {
+          queued: eligible.length,
+          submitted,
+          paused,
+          stopReason: report.stopReason ?? null,
+          portals: [...new Set(eligible.map((candidate) => candidate.portal))],
+        },
+      });
+
+      return {
         queued: eligible.length,
         submitted,
         paused,
+        outcomes: report.outcomes,
+        skipped: selection.skipped,
         stopReason: report.stopReason ?? null,
-        portals: [...new Set(eligible.map((candidate) => candidate.portal))],
-      },
-    });
-
-    return {
-      queued: eligible.length,
-      submitted,
-      paused,
-      outcomes: report.outcomes,
-      skipped: selection.skipped,
-      stopReason: report.stopReason ?? null,
-    };
+      };
     } finally {
       await browser.close();
     }
@@ -555,6 +560,7 @@ export async function runAutopilotNow(
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 }
+
 export type ApproveOutcome =
   | {
       ok: true;

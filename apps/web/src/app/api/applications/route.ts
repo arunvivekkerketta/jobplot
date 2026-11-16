@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/auth";
 import { createApplication, prisma } from "@jobpilot/db";
 import { requireUserRequest } from "@/lib/guard";
 
@@ -26,10 +25,8 @@ const listQuery = z.object({
 });
 
 export async function GET(req: Request) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const guarded = await requireUserRequest(req);
+  if (guarded instanceof Response) return guarded;
 
   const parsedQuery = listQuery.safeParse({
     status: new URL(req.url).searchParams.get("status") ?? undefined,

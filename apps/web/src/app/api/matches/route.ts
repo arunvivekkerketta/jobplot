@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { requireUserRequest } from "@/lib/guard";
 import { listMatches, prisma } from "@jobpilot/db";
 import { meetsThreshold } from "@jobpilot/core";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
-  const session = await auth();
-  const userId = session?.user?.id;
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const guarded = await requireUserRequest(req);
+  if (guarded instanceof Response) return guarded;
+  const { userId } = guarded;
 
   const profile = await prisma.profile.findUnique({
     where: { userId },
