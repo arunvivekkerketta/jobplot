@@ -4,6 +4,8 @@ import {
   readPortalPolicy,
   runAutopilot,
   selectAutopilotQueue,
+  trustState,
+  TRUST_LADDER_MIN,
   type AutopilotCandidate,
   type AutopilotPage,
 } from "../src/autopilot.js";
@@ -55,15 +57,39 @@ describe("gate 7.1: a portal runs unattended only when it is unlocked", () => {
   });
 
   it("refuses to unlock while submissions are off or the kill switch is on", () => {
-    expect(canUnlockPortal({ allowSubmit: false, killSwitch: false })).toMatchObject({
-      ok: false,
-      reason: "SUBMIT_DISABLED",
-    });
-    expect(canUnlockPortal({ allowSubmit: true, killSwitch: true })).toMatchObject({
-      ok: false,
-      reason: "KILL_SWITCH",
-    });
-    expect(canUnlockPortal({ allowSubmit: true, killSwitch: false })).toEqual({ ok: true });
+    expect(
+      canUnlockPortal({ allowSubmit: false, killSwitch: false }, { approved: 3 }),
+    ).toMatchObject({ ok: false, reason: "SUBMIT_DISABLED" });
+    expect(
+      canUnlockPortal({ allowSubmit: true, killSwitch: true }, { approved: 3 }),
+    ).toMatchObject({ ok: false, reason: "KILL_SWITCH" });
+    expect(
+      canUnlockPortal({ allowSubmit: true, killSwitch: false }, { approved: 3 }),
+    ).toEqual({ ok: true });
+  });
+});
+
+describe("gate 4.2: a portal must be earned with Co-Pilot approvals", () => {
+  const enabled = { allowSubmit: true, killSwitch: false };
+
+  it("reports progress towards the ladder", () => {
+    expect(TRUST_LADDER_MIN).toBe(3);
+    expect(trustState(0)).toEqual({ approved: 0, required: 3, remaining: 3, earned: false });
+    expect(trustState(2)).toEqual({ approved: 2, required: 3, remaining: 1, earned: false });
+    expect(trustState(3)).toEqual({ approved: 3, required: 3, remaining: 0, earned: true });
+    // More approvals than required never turn into a negative remainder.
+    expect(trustState(9).remaining).toBe(0);
+    // Untrusted input cannot buy trust.
+    expect(trustState(Number.NaN).approved).toBe(0);
+    expect(trustState(-4).approved).toBe(0);
+    expect(trustState(2.7).approved).toBe(2);
+  });
+
+  it("refuses the unlock until the third approval exists", () => {
+    const refused = canUnlockPortal(enabled, { approved: 2 });
+    expect(refused).toMatchObject({ ok: false, reason: "TRUST_LADDER" });
+    expect(refused.ok === false && refused.message).toContain("1 more");
+    expect(canUnlockPortal(enabled, { approved: 3 })).toEqual({ ok: true });
   });
 });
 

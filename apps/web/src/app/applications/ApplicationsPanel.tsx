@@ -1,4 +1,5 @@
 import Link from "next/link";
+import ApproveButton from "./ApproveButton";
 
 export interface ApplicationAction {
   type: string;
@@ -139,10 +140,16 @@ export default function ApplicationsPanel({
                     "–"
                   )}
                 </td>
-                <td className="py-3">
+                <td className="space-y-2 py-3">
                   <a href={application.job.url} className="text-blue-700 underline" rel="noreferrer">
                     Posting
                   </a>
+                  {/* 4.2: the user's own approval is what earns a portal, so the
+                      one place it can be given is the row that is waiting. */}
+                  {application.mode === "COPILOT" &&
+                    ["QUEUED", "PAUSED_NEEDS_HUMAN", "BLOCKED"].includes(
+                      application.status,
+                    ) && <ApproveButton applicationId={application.id} />}
                 </td>
               </tr>
             ))}

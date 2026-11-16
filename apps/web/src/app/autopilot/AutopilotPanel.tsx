@@ -162,6 +162,12 @@ export default function AutopilotPanel({ initial }: { initial: AutopilotStatus }
                 <span>
                   <strong>{portal.portal}</strong> · {portal.open} open ·{" "}
                   {portal.submissionsToday} submitted today
+                  <span
+                    className="ml-2 text-xs text-neutral-600"
+                    data-testid="portal-trust"
+                  >
+                    {portal.approved} of {portal.required} approved on Co-Pilot
+                  </span>
                 </span>
                 {portal.unlocked ? (
                   <span className="space-x-3">
@@ -175,6 +181,23 @@ export default function AutopilotPanel({ initial }: { initial: AutopilotStatus }
                     >
                       Lock
                     </button>
+                  </span>
+                ) : portal.remaining > 0 ? (
+                  // 4.2: the portal is earned, not chosen, so the control says
+                  // why it is unavailable instead of only being greyed out.
+                  <span className="flex flex-wrap items-center gap-2 text-xs text-neutral-600">
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      disabled
+                      data-testid="portal-unlock-blocked"
+                    >
+                      Unlock
+                    </button>
+                    <span data-testid="portal-trust-hint">
+                      Approve {portal.remaining} more Co-Pilot application
+                      {portal.remaining === 1 ? "" : "s"} first
+                    </span>
                   </span>
                 ) : (
                   <button

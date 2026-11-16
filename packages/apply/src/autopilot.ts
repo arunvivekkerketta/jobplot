@@ -27,16 +27,49 @@ export function isPortalUnlocked(policies: unknown, portal: string): boolean {
 
 export type UnlockDecision =
   | { ok: true }
-  | { ok: false; reason: "KILL_SWITCH" | "SUBMIT_DISABLED"; message: string };
+  | {
+      ok: false;
+      reason: "KILL_SWITCH" | "SUBMIT_DISABLED" | "TRUST_LADDER";
+      message: string;
+    };
+
+/**
+ * A portal is earned, not chosen: this many applications the user approved
+ * themselves in Co-Pilot mode are required before it may run unattended (4.2).
+ */
+export const TRUST_LADDER_MIN = 3;
+
+export interface TrustState {
+  approved: number;
+  required: number;
+  remaining: number;
+  earned: boolean;
+}
+
+/**
+ * Progress towards the trust ladder. The ONLY input is the number of stored
+ * SUBMITTED Co-Pilot applications for that portal, so no UI state or request body
+ * can talk a portal into being unlocked.
+ */
+export function trustState(approved: number, required = TRUST_LADDER_MIN): TrustState {
+  const safe = Number.isFinite(approved) && approved > 0 ? Math.floor(approved) : 0;
+  return {
+    approved: safe,
+    required,
+    remaining: Math.max(0, required - safe),
+    earned: safe >= required,
+  };
+}
 
 /**
  * Unlocking a portal hands it unattended submission, so it is refused while the
- * master switch is off or the kill switch is on (I3/I4).
+ * master switch is off, while the kill switch is on (I3/I4), and until the user
+ * has approved enough Co-Pilot applications on that portal themselves (4.2).
  */
-export function canUnlockPortal(settings: {
-  allowSubmit: boolean;
-  killSwitch: boolean;
-}): UnlockDecision {
+export function canUnlockPortal(
+  settings: { allowSubmit: boolean; killSwitch: boolean },
+  trust: { approved: number },
+): UnlockDecision {
   if (settings.killSwitch) {
     return {
       ok: false,
@@ -49,6 +82,17 @@ export function canUnlockPortal(settings: {
       ok: false,
       reason: "SUBMIT_DISABLED",
       message: "allowSubmit is off, so Auto-Pilot could only fill forms, never send them.",
+    };
+  }
+
+  const state = trustState(trust.approved);
+  if (!state.earned) {
+    return {
+      ok: false,
+      reason: "TRUST_LADDER",
+      message:
+        `Approve ${state.remaining} more Co-Pilot application(s) on this portal before ` +
+        `unlocking it (${state.approved} of ${state.required}).`,
     };
   }
   return { ok: true };

@@ -1,12 +1,13 @@
 import { test, expect, type Page } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
+import { approveCoPilotApplications } from "./trust";
 
 const MOCK = process.env.MOCK_ATS_URL ?? "http://localhost:4600";
 const stamp = Date.now();
 const fixturePath = path.resolve(__dirname, "../../../../fixtures/sample-resume.json");
 
-test.setTimeout(240_000);
+test.setTimeout(420_000);
 
 interface MockLogEntry {
   at: string;
@@ -125,6 +126,10 @@ test("gate 8.1-8.4: the scheduled tick submits for opted-in users only", async (
     },
   });
   expect(base.status()).toBe(200);
+
+  // Gate 4.2: a portal is earned with Co-Pilot approvals before it may run
+  // unattended; the schedule below depends on the unlocked portal.
+  expect(await approveCoPilotApplications(page, 3, `${stamp}-sched`)).toBe(3);
   expect(
     (
       await page.request.post("/api/autopilot", {

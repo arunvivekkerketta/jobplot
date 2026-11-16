@@ -1,12 +1,13 @@
 import { test, expect, type Page } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
+import { approveCoPilotApplications } from "./trust";
 
 const MOCK = process.env.MOCK_ATS_URL ?? "http://localhost:4600";
 const stamp = Date.now();
 const fixturePath = path.resolve(__dirname, "../../../../fixtures/sample-resume.json");
 
-test.setTimeout(240_000);
+test.setTimeout(420_000);
 
 interface MockLogEntry {
   at: string;
@@ -120,10 +121,63 @@ test("gate 7.1-7.5: Auto-Pilot submits unattended behind portals, caps and audit
     data: { allowSubmit: true, killSwitch: false, dailyCap: 10, matchThreshold: 50 },
   });
   expect(on.status()).toBe(200);
+
+  // The Greenhouse fixture asks for a cover letter, which only the Answer Bank
+  // may supply; without it a Co-Pilot approval pauses for a human (I5).
+  const coverLetter = await page.request.post("/api/answers", {
+    data: { key: "cover_letter", answer: `I build reliable payment systems. ${stamp}` },
+  });
+  expect(coverLetter.status()).toBe(201);
+
+  // Gate 4.2: the portal is earned. Approvals are cumulative, and earlier specs
+  // in a full run have already contributed some, so the boundary is computed from
+  // the stored count instead of assumed to start at zero.
+  const beforeLadder = (await (await page.request.get("/api/autopilot")).json()) as {
+    portals: Array<{ portal: string; approved: number; required: number }>;
+  };
+  const manualBefore = beforeLadder.portals.find((portal) => portal.portal === "manual");
+  const required = manualBefore?.required ?? 3;
+  const stillNeeded = Math.max(0, required - (manualBefore?.approved ?? 0));
+
+  if (stillNeeded > 0) {
+    if (stillNeeded > 1) {
+      expect(
+        await approveCoPilotApplications(page, stillNeeded - 1, `${stamp}-ladder`),
+      ).toBe(stillNeeded - 1);
+    }
+    const stillLocked = await page.request.post("/api/autopilot", {
+      data: { action: "unlock", portal: "manual" },
+    });
+    expect(stillLocked.status(), JSON.stringify(beforeLadder)).toBe(409);
+    expect(((await stillLocked.json()) as { error: string }).error).toContain(
+      "1 more Co-Pilot",
+    );
+    expect(await approveCoPilotApplications(page, 1, `${stamp}-ladder-last`)).toBe(1);
+  } else {
+    // The ladder was already earned before this spec ran; the refusal itself is
+    // proven by the standalone run and by the unit tests for canUnlockPortal.
+    expect(manualBefore?.approved ?? 0).toBeGreaterThanOrEqual(required);
+  }
+
   const unlocked = await page.request.post("/api/autopilot", {
     data: { action: "unlock", portal: "manual" },
   });
   expect(unlocked.status()).toBe(200);
+
+  const ladderStatus = (await (await page.request.get("/api/autopilot")).json()) as {
+    portals: Array<{
+      portal: string;
+      unlocked: boolean;
+      approved: number;
+      required: number;
+      remaining: number;
+    }>;
+  };
+  const manualPortal = ladderStatus.portals.find((portal) => portal.portal === "manual");
+  expect(manualPortal?.approved, JSON.stringify(ladderStatus)).toBeGreaterThanOrEqual(3);
+  expect(manualPortal?.required).toBe(3);
+  expect(manualPortal?.remaining).toBe(0);
+  expect(manualPortal?.unlocked).toBe(true);
 
   // Gate 7.2: only a posting with an approved resume can be queued.
   const beforeApproval = await page.request.post("/api/autopilot", {
@@ -137,13 +191,12 @@ test("gate 7.1-7.5: Auto-Pilot submits unattended behind portals, caps and audit
   expect(beforeBody.skipped.map((entry) => entry.reason)).toContain("NO_APPROVED_RESUME");
 
   await approvedVersion(page, jobA);
-  // The Greenhouse fixture asks for a cover letter, which only the Answer Bank
-  // may supply; without this the run would pause for a human (I5).
-  const coverLetter = await page.request.post("/api/answers", {
-    data: { key: "cover_letter", answer: `I build reliable payment systems. ${stamp}` },
-  });
-  expect(coverLetter.status()).toBe(201);
+  // The approvals above already submitted to the mock ATS on this host, so the
+  // log is cleared to keep this run's assertion about one submission precise.
   await page.request.post(`${MOCK}/__reset`);
+  // The stop gate spaces actions on one host by 30s; the Co-Pilot approvals just
+  // submitted here, so the unattended run waits that interval out like any other.
+  await page.waitForTimeout(31_000);
 
   // Gates 7.3/7.4: one unattended submission, with no click anywhere.
   const run = await page.request.post("/api/autopilot", {
@@ -249,6 +302,10 @@ test("gate 7.7: the page shows portals, the queue and the last run", async ({ pa
 
   const portalRow = page.getByTestId("portal-row").first();
   await expect(portalRow).toBeVisible();
+  // Gate 4.2: the panel reports the earned approvals, not a hidden number.
+  await expect(page.getByTestId("portal-trust").first()).toContainText(
+    /[3-9]\d* of 3 approved on Co-Pilot/,
+  );
   // The card reports whatever the last run did, so its own summary is what is
   // checked here; the run's numbers are asserted by gate 7.1-7.5 above.
   await expect(page.getByTestId("autopilot-last-run")).toContainText(/queued \d+/);

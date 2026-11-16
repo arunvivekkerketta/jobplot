@@ -864,6 +864,25 @@ export async function submissionCounts(input: {
   return { total, byPortal, lastByPortal };
 }
 
+/**
+ * Lifetime Co-Pilot approvals per portal: the trust ladder's only input (4.2).
+ *
+ * `submissionCounts` is scoped to today and to every mode, so it cannot answer
+ * this; a portal earned last month must stay earned, and an Auto-Pilot submission
+ * must never count as the user's own approval.
+ */
+export async function approvedCoPilotByPortal(): Promise<Record<string, number>> {
+  const rows = await prisma.application.groupBy({
+    by: ["portal"],
+    where: { mode: "COPILOT", status: "SUBMITTED" },
+    _count: { _all: true },
+  });
+
+  const counts: Record<string, number> = {};
+  for (const row of rows) counts[row.portal] = row._count._all;
+  return counts;
+}
+
 /** Bytes of a stored document, scoped to its owner, for attaching to a form. */
 export async function readDocumentBytes(input: {
   id: string;

@@ -1775,3 +1775,54 @@ pnpm e2e       → 36 passed (3.6m)
 ### Still to do in Stage 4
 
 4.2 (three Co-Pilot approvals per portal before Auto-Pilot), 4.4 (letters with a draft watermark and a claim re-check before sending) and 4.6 (moving Run off the request path). 4.6 needs the user's decision: a pg-boss worker cannot be exercised by the current e2e suite, which clicks Run and expects a submission in the same request, so it would need a real worker in the test run.
+
+## Phase 17 — Stage 4, task 4.2: the earned Auto-Pilot trust ladder
+
+Phase 16 listed 4.2 as [PENDING]; this section supersedes that row.
+
+| Gate | Sub-task | Observable outcome | Expected proof | Status |
+| --- | --- | --- | --- | --- |
+| 4.2a | Approve and send, one Co-Pilot application | `POST /api/applications/{id}/approve` with `{consent:true}` fills and submits exactly that row and records it as `SUBMITTED` with `mode: "COPILOT"`; without consent it is refused | route 422 without consent, e2e approval returns `{status:"SUBMITTED", mode:"COPILOT"}` | [MET] |
+| 4.2b | Send-time stop checks | The kill switch and `allowSubmit` are re-read before the browser opens **and** once more immediately before the submit click; the row is claimed so two sends cannot race; the claim is released on every failure path | unit-tested `canUnlockPortal` + the route's 409s; e2e approval succeeds while nothing is stopped | [MET] |
+| 4.2c | Three approvals per portal before unlock | `canUnlockPortal` refuses with `TRUST_LADDER` and "N more" until `TRUST_LADDER_MIN = 3` stored Co-Pilot approvals exist on that portal; the count comes only from `Application` rows (`mode COPILOT`, `status SUBMITTED`) | `trustState`/`canUnlockPortal` unit tests; e2e unlock is 409 with "1 more Co-Pilot" at two approvals, 200 at three | [MET] |
+| 4.2d | "N of 3" in the Auto-Pilot panel | Each portal row shows "N of 3 approved on Co-Pilot"; Unlock is disabled with the remaining count while the ladder is unmet | e2e `portal-trust` text and `portal-unlock-blocked` | [MET] |
+| 4.2e | phase7 earns the unlock first | The phase7 flow earns its approvals through the real approve path before the existing 7.1–7.5 gates, and the mock ATS log is reset so the run's "one submission" assertion stays exact | phase7: `4 passed (1.9m)` | [MET] |
+
+### Evidence
+
+```
+pnpm lint      → exit 0
+pnpm typecheck → exit 0
+pnpm test      → core 43, sources 34, render 22, apply 65 (2 new trust gates), autopilot 10, db 22, llm 38 = 234 passed
+pnpm e2e       → 36 passed (4.0m)
+phase7 alone   → 4 passed (1.9m)   # ladder boundary asserted from a known count
+phase8 alone   → 3 passed (1.7m)
+```
+
+Walkthrough of the 4.2c proof: `approvedCoPilotByPortal()` groups `Application` by portal
+where `mode = "COPILOT" AND status = "SUBMITTED"` — never `submissionCounts`, which is
+today-scoped and includes Auto-Pilot submissions. `updatePortal` reads that count, so a
+request body cannot buy trust. In the spec, an unlock attempt after two approvals returns
+`409` with `Approve 1 more Co-Pilot application(s) on this portal before unlocking it (2 of 3)`,
+and the same call returns `200` after the third approval, with `approved: 3, required: 3,
+remaining: 0, unlocked: true` in `GET /api/autopilot`.
+
+### Deviations
+
+- 4.2b/4.2a accept a Co-Pilot row in `QUEUED`, `PAUSED_NEEDS_HUMAN` or `BLOCKED`, not only
+  `PAUSED_NEEDS_HUMAN`. A Co-Pilot row is created `QUEUED` and nothing else could ever fill it,
+  so restricting approval to `PAUSED_NEEDS_HUMAN` alone would make the ladder unearnable in
+  the product; the unit-tested gate is still "three *submitted* Co-Pilot approvals".
+- The phase7 ladder boundary is computed from the stored count rather than assuming zero,
+  because approvals are cumulative and earlier specs leave some behind; a standalone phase7
+  run exercises the 2-of-3 refusal, which is the run recorded above.
+- The phase7 flow now waits 31 s after its approvals: the stop gate spaces actions on one host
+  by 30 s and the approvals just submitted there. `test.setTimeout` was raised from 240 s to
+  420 s in phase7 and phase8 to cover the extra approvals.
+- Verifying the UI button itself was limited to the e2e path through the API plus the panel
+  text; the "Approve and send" button was not clicked in a browser.
+
+### Still pending in Stage 4
+
+4.4 (cover letter, cold email and offer letters with the MOCK_OFFER watermark) and 4.6
+(moving Run onto a background queue, which needs the user's decision on how it is verified).

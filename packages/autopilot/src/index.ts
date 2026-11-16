@@ -6,8 +6,10 @@ import {
   canUnlockPortal,
   playwrightPage,
   readPortalPolicy,
+  runApplication,
   runAutopilot,
   selectAutopilotQueue,
+  trustState,
   type AutopilotCandidate,
   type AutopilotOutcome,
   type PageLike,
@@ -16,6 +18,7 @@ import {
 import { startOfDayInZone, type JsonResumeProfile } from "@jobpilot/core";
 import { notifyHumanNeeded } from "./notify.js";
 import {
+  approvedCoPilotByPortal,
   claimApplication,
   createApplication,
   listAnswers,
@@ -36,6 +39,10 @@ export interface PortalStatus {
   unlockedAt: string | null;
   submissionsToday: number;
   open: number;
+  /** Co-Pilot applications the user approved on this portal (trust ladder, 4.2). */
+  approved: number;
+  required: number;
+  remaining: number;
 }
 
 export interface AutopilotStatus {
@@ -183,18 +190,23 @@ export async function loadAutopilotStatus(userId: string): Promise<AutopilotStat
     by: ["source"],
     _count: { _all: true },
   });
+  const trustCounts = await approvedCoPilotByPortal();
 
   const portals: PortalStatus[] = sources
     .map((row) => row.source)
     .sort()
     .map((portal) => {
       const policy = readPortalPolicy(settings.perPortalMode, portal);
+      const trust = trustState(trustCounts[portal] ?? 0);
       return {
         portal,
         unlocked: policy !== null,
         unlockedAt: policy?.unlockedAt ?? null,
         submissionsToday: counts.byPortal[portal] ?? 0,
         open: candidates.filter((candidate) => candidate.portal === portal).length,
+        approved: trust.approved,
+        required: trust.required,
+        remaining: trust.remaining,
       };
     });
 
@@ -235,7 +247,10 @@ export type PortalUpdate =
   | { ok: true; portal: string; unlocked: boolean }
   | { ok: false; status: number; error: string };
 
-/** Unlocking is refused unless submissions are enabled and nothing is stopped (7.1). */
+/**
+ * Unlocking is refused unless submissions are enabled, nothing is stopped (7.1)
+ * and the portal has been earned with Co-Pilot approvals first (4.2).
+ */
 export async function updatePortal(
   userId: string,
   portal: string,
@@ -244,10 +259,12 @@ export async function updatePortal(
   const settings = await settingsFor(userId);
 
   if (unlocked) {
-    const decision = canUnlockPortal({
-      allowSubmit: settings.allowSubmit,
-      killSwitch: settings.killSwitch,
-    });
+    // Read from stored applications, never from the request (4.2).
+    const trust = trustState((await approvedCoPilotByPortal())[portal] ?? 0);
+    const decision = canUnlockPortal(
+      { allowSubmit: settings.allowSubmit, killSwitch: settings.killSwitch },
+      { approved: trust.approved },
+    );
     if (!decision.ok) {
       return { ok: false, status: 409, error: decision.message };
     }
@@ -538,6 +555,219 @@ export async function runAutopilotNow(
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 }
+export type ApproveOutcome =
+  | {
+      ok: true;
+      mode: "COPILOT";
+      status: "SUBMITTED" | "PAUSED_NEEDS_HUMAN" | "BLOCKED";
+      reason: string | null;
+      actions: number;
+    }
+  | { ok: false; status: number; error: string };
+
+/** The statuses where a Co-Pilot row is still waiting for the user's decision. */
+const APPROVABLE_STATUSES = ["QUEUED", "PAUSED_NEEDS_HUMAN", "BLOCKED"];
+
+/**
+ * "Approve and send" for one Co-Pilot application (4.2).
+ *
+ * This is the only place a Co-Pilot row becomes SUBMITTED, so every stop check
+ * lives here: the master switch, the kill switch, the daily cap and the per-row
+ * claim are re-read now, and the kill switch is read once more while the form is
+ * filled, immediately before the submit click (I4). The row keeps
+ * `mode: "COPILOT"`, which is exactly what the trust ladder counts.
+ */
+export async function runApprovedApplication(
+  userId: string,
+  applicationId: string,
+): Promise<ApproveOutcome> {
+  const application = await prisma.application.findUnique({
+    where: { id: applicationId },
+    select: { id: true, status: true, mode: true, jobId: true },
+  });
+  if (!application) return { ok: false, status: 404, error: "Unknown application" };
+  if (application.mode !== "COPILOT") {
+    return {
+      ok: false,
+      status: 409,
+      error:
+        "Only a Co-Pilot application can be approved here; an Auto-Pilot one needs an unlocked portal.",
+    };
+  }
+  if (!APPROVABLE_STATUSES.includes(application.status)) {
+    return {
+      ok: false,
+      status: 409,
+      error: `Cannot approve an application in status ${application.status}`,
+    };
+  }
+
+  const settings = await settingsFor(userId);
+  if (settings.killSwitch) {
+    return { ok: false, status: 409, error: "The kill switch is on, so nothing can be sent." };
+  }
+  if (!settings.allowSubmit) {
+    return { ok: false, status: 409, error: "allowSubmit is off, so nothing can be sent." };
+  }
+
+  const today = await submissionCounts({ since: startOfToday() });
+  if (today.total >= settings.dailyCap) {
+    return {
+      ok: false,
+      status: 409,
+      error: `Daily cap reached (${today.total}/${settings.dailyCap}).`,
+    };
+  }
+
+  const profile = await prisma.profile.findUnique({
+    where: { userId },
+    select: { id: true, jsonResume: true },
+  });
+  if (!profile) {
+    return {
+      ok: false,
+      status: 409,
+      error: "Import a profile before approving an application.",
+    };
+  }
+
+  const job = await prisma.job.findUnique({
+    where: { id: application.jobId },
+    select: { id: true, url: true },
+  });
+  if (!job) return { ok: false, status: 404, error: "Unknown job" };
+
+  // Two runs (a click and a retry) must never both drive this form (H5).
+  if (!(await claimApplication(application.id))) {
+    return { ok: false, status: 409, error: "This application is already being sent." };
+  }
+
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobpilot-approve-"));
+  fs.chmodSync(tempDir, 0o700);
+  try {
+    // The same evidence rule as Auto-Pilot: a version approved for this posting,
+    // otherwise a generic approved one (I1/I3).
+    const approvedVersion =
+      (await prisma.resumeVersion.findFirst({
+        where: {
+          profileId: profile.id,
+          jobId: job.id,
+          approvedAt: { not: null },
+          pdfPath: { not: null },
+        },
+        orderBy: { id: "desc" },
+        select: { pdfPath: true },
+      })) ??
+      (await prisma.resumeVersion.findFirst({
+        where: {
+          profileId: profile.id,
+          jobId: null,
+          approvedAt: { not: null },
+          pdfPath: { not: null },
+        },
+        orderBy: { id: "desc" },
+        select: { pdfPath: true },
+      }));
+
+    let resumePath: string | undefined;
+    if (approvedVersion?.pdfPath) {
+      const documentId = approvedVersion.pdfPath.split("/").pop();
+      const stored = documentId
+        ? await readDocumentBytes({ id: documentId, userId })
+        : null;
+      if (stored) {
+        // Readable only by this account, and deleted on every exit path.
+        resumePath = path.join(tempDir, `${randomUUID()}.pdf`);
+        fs.writeFileSync(resumePath, stored.bytes, { mode: 0o600 });
+      }
+    }
+
+    let chromium: typeof import("playwright").chromium;
+    try {
+      ({ chromium } = await import("playwright"));
+    } catch {
+      await releaseApplication(application.id);
+      return {
+        ok: false,
+        status: 503,
+        error: "The browser runtime is not installed, so nothing was sent.",
+      };
+    }
+
+    let browser: Awaited<ReturnType<typeof chromium.launch>>;
+    try {
+      browser = await chromium.launch();
+    } catch {
+      await releaseApplication(application.id);
+      return {
+        ok: false,
+        status: 503,
+        error: "The browser could not be started, so nothing was sent.",
+      };
+    }
+
+    try {
+      const page = await browser.newPage();
+      const result = await runApplication({
+        page: playwrightPage(page as unknown as PageLike),
+        url: job.url,
+        profile: profile.jsonResume as unknown as JsonResumeProfile,
+        answers: await listAnswers(userId),
+        ...(resumePath ? { resumePath } : {}),
+        // Last chance to stop: the form is filled, nothing has been sent (I4).
+        beforeSubmit: async () => {
+          const fresh = await settingsFor(userId);
+          return !fresh.killSwitch && fresh.allowSubmit;
+        },
+      });
+
+      await recordApplicationResult({
+        applicationId: application.id,
+        status: result.status,
+        actions: result.actions,
+        ...(result.reason ? { reason: result.reason } : {}),
+        ...(result.submissionText ? { submissionText: result.submissionText } : {}),
+      });
+
+      await writeAudit({
+        actor: "USER",
+        action: "application.approve",
+        entityType: "Application",
+        entityId: application.id,
+        payload: {
+          mode: "COPILOT",
+          status: result.status,
+          reason: result.reason ?? null,
+          actions: result.actions.length,
+        },
+      });
+
+      return {
+        ok: true,
+        mode: "COPILOT",
+        status: result.status,
+        reason: result.reason ?? null,
+        actions: result.actions.length,
+      };
+    } finally {
+      await browser.close();
+    }
+  } catch (error) {
+    // The claim must never outlive a failed attempt: the user can retry.
+    await releaseApplication(application.id);
+    await writeAudit({
+      actor: "SYSTEM",
+      action: "application.approve.failed",
+      entityType: "Application",
+      entityId: application.id,
+      payload: { message: error instanceof Error ? error.message : "unknown error" },
+    });
+    return { ok: false, status: 500, error: "Approving the application failed" };
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
 /** Each scheduled tick spends at most one submission per user. */
 export const SCHEDULED_MAX_PER_USER = 1;
 
