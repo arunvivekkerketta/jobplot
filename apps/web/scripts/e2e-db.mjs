@@ -44,7 +44,19 @@ if (!/^[A-Za-z0-9_]+$/.test(name) || !name.endsWith("_e2e")) {
 }
 
 const dbDir = path.join(repoRoot, "packages/db");
-const dbEnv = { ...env, DATABASE_URL: target };
+/**
+ * The second tenant exists only in the e2e database: the scoping gates sign in as
+ * it to prove that another account's application answers 404 over HTTP. A normal
+ * `db:seed` never sees these variables, so the developer database keeps one user.
+ */
+const SECOND_EMAIL = "second@jobpilot.local";
+const SECOND_PASSWORD = "jobpilot-second";
+const dbEnv = {
+  ...env,
+  DATABASE_URL: target,
+  E2E_SECOND_EMAIL: SECOND_EMAIL,
+  E2E_SECOND_PASSWORD: SECOND_PASSWORD,
+};
 
 function run(args, { input = "", quiet = false } = {}) {
   // `pnpm` is a .cmd shim on Windows, so the runner has to go through a shell.

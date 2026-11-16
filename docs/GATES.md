@@ -2894,3 +2894,64 @@ $ pnpm test:integration       → 0
   downloaded and the lockfile only gains the direct edge.
 - The self-test mutates the real `ci.yml` in memory rather than a fixture, so it stays honest as the
   workflow grows: a mutant that no longer applies is reported as a failure instead of passing silently.
+
+## Phase 29 — the Phase 20 scoping fix, proved at the HTTP boundary
+
+Phase 20 scoped `Application` by `userId` and its table points at a db test. That leaves the route
+itself unproven: the db helper could be scoped and a route could still call the unscoped one. These
+cases sign in as a genuine second tenant and post to the first tenant's application over HTTP, with
+real ids and real NextAuth sessions.
+
+The second account did not exist to sign in with, so `packages/db/src/seed.ts` seeds one **only when
+`E2E_SECOND_EMAIL`/`E2E_SECOND_PASSWORD` are set**, and only `apps/web/scripts/e2e-db.mjs` sets them
+(for the e2e database). A normal `pnpm db:seed` still leaves exactly one account.
+
+| Gate | Sub-Task Name | Observable Outcome | Expected Proof | Status |
+| --- | --- | --- | --- | --- |
+| 20a | A second account cannot report a result on another account's application | `POST /api/applications/<owner id>/result` from the second session answers `404 {error:"Unknown application"}` | phase11 test 1, second browser context with its own cookie jar | [MET] |
+| 20b | A second account cannot approve another account's application | `POST …/approve` from the second session answers `404` | phase11 test 1 and test 2 | [MET] |
+| 20c | The refusal is not a probe oracle | an id that never existed answers byte-identically (`404`, same error) | phase11 test 1 | [MET] |
+| 20d | The refusal is about ownership, not the payload | the owner posts the same payload to the same id and gets `200 {status:"SUBMITTED"}` | phase11 test 1, after the second session closes | [MET] |
+| 20e | The second account's listing never contains the row | `GET /api/applications` as the second account omits the id | phase11 test 1 | [MET] |
+| 20f | A refused approve sends nothing | the mock ATS `/submit/` count is unchanged across the refused call (I3/I4) | phase11 test 2 | [MET] |
+| 20g | The tests fail when the scoping is removed | un-scoping `findApplicationForUser` → `Expected: 404, Received: 200`; un-scoping `runApprovedApplication` → `Expected: 404, Received: 409` | two mutation runs, each reverted with `git checkout` | [MET] |
+
+### Evidence
+
+```
+$ pnpm --filter @jobpilot/web exec playwright test tests/e2e/phase11-scoping.spec.ts --reporter=line
+  ok 1 tests\e2e\phase11-scoping.spec.ts:127:5 › gate 20a/20b: another account's application is 404 over HTTP for result and approve (28.0s)
+  ok 2 tests\e2e\phase11-scoping.spec.ts:187:5 › gate 20c: approving another account's application never reaches the browser (4.6s)
+  2 passed (1.2m)
+
+# mutation control 1 — findApplicationForUser loses `userId`
+  1) gate 20a/20b …
+    Expected: 404
+    Received: 200
+  1 failed, 1 passed (1.4m)      # test 2 still passes: approve is still scoped
+
+# mutation control 2 — runApprovedApplication loses `userId`
+  1) gate 20a/20b … Expected: 404, Received: 409
+  2) gate 20c    … Expected: 404, Received: 409
+  2 failed
+
+$ pnpm lint → 0    pnpm typecheck → 0    pnpm check:workflows → 0
+$ pnpm test → 310 passed, 1 skipped (db 34, llm 58, apply 73, web 21, core 50, render 25, sources 34, autopilot 19 + 1 skipped)
+$ pnpm e2e → 41 passed (5.3m)
+  ok  9 tests\e2e\phase11-scoping.spec.ts:127:5 › gate 20a/20b …
+  ok 10 tests\e2e\phase11-scoping.spec.ts:187:5 › gate 20c …
+```
+
+### Deviations and limits
+
+- The first mutation control reported a false pass. `where: { id: input.id, userId: input.userId }`
+  appears in four owner-scoped readers in `packages/db/src/index.ts`, and the driver patched the first
+  match (a different helper) instead of `findApplicationForUser`. Re-targeting the mutation at the
+  helper's full body produced the expected failure. A mutation that silently hits the wrong line is
+  the reason those controls are run rather than assumed.
+- The second account is created with a test-only password seeded into the e2e database, the same way
+  the admin fixture works; it is not a production registration path.
+- The 404 shape is asserted (`{error:"Unknown application"}`) but the response bodies are not
+  compared byte-for-byte; equality with a nonexistent id is asserted on status and error message.
+- `approve` from the second session is refused before any browser work, so the run never reaches the
+  stop checks; the mock-ATS count assertion is what shows nothing was sent.

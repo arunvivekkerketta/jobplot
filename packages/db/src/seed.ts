@@ -48,6 +48,34 @@ async function main(): Promise<void> {
   console.log(
     `Seeded admin ${email} with default Settings: mode COPILOT, dailyCap 10, matchThreshold 75, killSwitch false, allowSubmit false`,
   );
+
+  // The e2e suite needs a second tenant to prove that ownership is enforced at the
+  // HTTP boundary, not only inside the db helper. The account is seeded only when
+  // the environment names it, so a normal `db:seed` still leaves one account.
+  const secondEmail = process.env.E2E_SECOND_EMAIL?.trim().toLowerCase();
+  const secondPassword = process.env.E2E_SECOND_PASSWORD;
+  if (!secondEmail || !secondPassword) return;
+
+  const second = await prisma.user.upsert({
+    where: { email: secondEmail },
+    update: { passwordHash: await hashPassword(secondPassword) },
+    create: { email: secondEmail, passwordHash: await hashPassword(secondPassword) },
+  });
+  await prisma.settings.upsert({
+    where: { userId: second.id },
+    update: {},
+    create: {
+      userId: second.id,
+      mode: "COPILOT",
+      dailyCap: 10,
+      matchThreshold: 75,
+      killSwitch: false,
+      allowSubmit: false,
+      perPortalMode: {},
+      quietHours: {},
+    },
+  });
+  console.log(`Seeded second account ${secondEmail} for the cross-account gates`);
 }
 
 main()
