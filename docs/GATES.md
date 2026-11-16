@@ -2840,3 +2840,57 @@ justify a submission are the numbers the next visit shows, and a run that stoppe
   assertion for the summary keep working; both read the same rows.
 - Timestamps render in the browser's locale (`toLocaleString`); the raw ISO value stays in the audit
   trail.
+
+## Phase 28 — the workflow templates are validated locally and in CI
+
+The integration step added for gate 2.4 cannot be exercised on this machine the way the hosted runner
+does it, so the workflow files that carry it had no local proof: a typo in `ci.yml` would only show up
+as a failed push. `scripts/check-workflows.mjs` closes that gap with the subset of `actionlint`'s rules
+that catches the breakages that actually happen, and it runs both as `pnpm check:workflows` and as a
+CI step before the rest of the job does any work.
+
+| Gate | Sub-Task Name | Observable Outcome | Expected Proof | Status |
+| --- | --- | --- | --- | --- |
+| 2.4v | The workflow parses | a malformed template fails with the file, line and column | self-test mutant "a file that is not YAML" is rejected | [MET] |
+| 2.4w | Every job can run | a job without `runs-on` (and without `uses`) fails | self-test mutant "a job with no runner" is rejected | [MET] |
+| 2.4x | Every step does something | a step with neither `run` nor `uses`, both, or an empty `run` fails | self-test mutant "a step with neither run nor uses" is rejected | [MET] |
+| 2.4y | References resolve | unknown top-level/job/step keys, duplicate step ids, unknown `needs`, and a `uses:` without a version all fail | self-test mutants "a needs that names a missing job" and "a uses without a version" are rejected | [MET] |
+| 2.4z | Expressions are balanced | an unclosed `${{` fails on the field that carries it | self-test mutant "an unbalanced expression" is rejected | [MET] |
+| 2.4aa | CI runs it before trusting the file | `Validate workflow YAML` runs `pnpm check:workflows` in the checks job | ci.yml step (after the compose audit, before `pnpm install`) | [MET] |
+
+### Evidence
+
+```
+$ pnpm check:workflows
+self-test ok: a job with no runner was rejected (1 failure(s))
+self-test ok: a needs that names a missing job was rejected (1 failure(s))
+self-test ok: a uses without a version was rejected (1 failure(s))
+self-test ok: an unbalanced expression was rejected (1 failure(s))
+self-test ok: a step with neither run nor uses was rejected (1 failure(s))
+self-test ok: a file that is not YAML was rejected (1 failure(s))
+OK: 2 workflow file(s) valid, and the checker rejects its mutants
+
+$ node scripts/check-workflows.mjs /tmp/broken-workflow.yml
+FAIL broken-workflow.yml: jobs.build: has no "runs-on" runner
+FAIL broken-workflow.yml: jobs.build.steps[0]: has neither "run" nor "uses"
+FAILED: 2 workflow problem(s)          (exit 1)
+
+$ pnpm check:workflows        → 0   (after adding the CI step)
+$ pnpm lint                   → 0
+$ pnpm typecheck              → 0
+$ pnpm test:integration       → 0
+[gate24] gate 2.4 exercised against the e2e database: 1/1 passed
+```
+
+### Deviations and limits
+
+- This is *actionlint-shaped*, not actionlint: it parses and checks structure (jobs, runners, steps,
+  keys, `needs`, action references, balanced `${{ }}`), but it does not evaluate expressions, type
+  `github.event` contexts, or lint shell scripts inside `run:` the way actionlint does. The distinctions
+  are in the script header. If the runner ever gains network access, swapping in the real binary is a
+  one-line change to the CI step.
+- `js-yaml@4.3.2` was already in the lockfile as a transitive dependency; it was added as a root
+  devDependency from the local store (`pnpm add -D -w js-yaml@4.3.2 --offline`), so nothing new was
+  downloaded and the lockfile only gains the direct edge.
+- The self-test mutates the real `ci.yml` in memory rather than a fixture, so it stays honest as the
+  workflow grows: a mutant that no longer applies is reported as a failure instead of passing silently.

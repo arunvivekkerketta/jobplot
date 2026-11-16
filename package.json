@@ -21,6 +21,7 @@
     "build": "turbo run build",
     "lint": "eslint .",
     "check:compose": "node scripts/check-compose-secrets.mjs --self-test",
+    "check:workflows": "node scripts/check-workflows.mjs --self-test",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "test:integration": "node scripts/gate24-integration.mjs",
@@ -38,6 +39,7 @@
     "@typescript-eslint/parser": "^8.44.0",
     "eslint": "^9.35.0",
     "eslint-config-next": "15.5.4",
+    "js-yaml": "4.3.2",
     "prettier": "^3.6.2",
     "turbo": "^2.5.0",
     "typescript": "^5.9.2"

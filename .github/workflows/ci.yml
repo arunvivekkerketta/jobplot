@@ -78,6 +78,14 @@ jobs:
       - name: Compose secret audit
         run: pnpm check:compose
 
+      # actionlint is a Go binary, so CI would have to download a toolchain just to
+      # parse two files. This script applies the same structural rules locally and
+      # on the runner, and fails on its own mutants, so a green step means the
+      # workflows parse, every job has a runner, every step has a run or a uses,
+      # every needs resolves, and every ${{ }} expression is balanced.
+      - name: Validate workflow YAML
+        run: pnpm check:workflows
+
       - name: Lint
         run: pnpm lint
 
