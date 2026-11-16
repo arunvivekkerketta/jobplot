@@ -25,8 +25,8 @@
     "e2e": "pnpm --filter @jobpilot/web e2e",
     "db:migrate": "pnpm --filter @jobpilot/db db:migrate",
     "db:seed": "pnpm --filter @jobpilot/db db:seed",
-    "db:generate": "pnpm --filter @jobpilot/db db:generate",
-    "postinstall": "pnpm --filter @jobpilot/db db:generate",
+    "db:generate": "node scripts/db-generate.mjs",
+    "postinstall": "node scripts/db-generate.mjs",
     "format": "prettier --write ."
   },
   "devDependencies": {

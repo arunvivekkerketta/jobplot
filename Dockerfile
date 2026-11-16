@@ -24,8 +24,9 @@ FROM base AS build
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
     CI=1
 COPY . .
+# `pnpm install` already runs the root postinstall (scripts/db-generate.mjs), so the
+# Prisma client is generated here and does not need a second pass.
 RUN pnpm install --frozen-lockfile
-RUN pnpm db:generate
 RUN pnpm --filter @jobpilot/web build
 
 FROM base AS runtime

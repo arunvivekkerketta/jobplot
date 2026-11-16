@@ -15,6 +15,7 @@ apps/worker/.env
 .pgdata/
 .pg-install/
 .tmp/
+*.log
 
 # Next.js generated type shim
 next-env.d.ts
