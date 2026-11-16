@@ -1,0 +1,5 @@
+
+> @jobpilot/mock-ats@0.1.0 start C:\Users\akerk\OneDrive\Desktop\jobplot\apps\mock-ats
+> tsx src/server.ts
+
+[mock-ats] listening on http://localhost:4600
