@@ -7,6 +7,7 @@ import {
   writeAudit,
 } from "@jobpilot/db";
 import { enqueueAutopilotRun } from "@jobpilot/autopilot/queue";
+import { ensureInProcessRunWorker } from "@/lib/in-process-worker";
 import {
   BrowserUnavailableError,
   loadAutopilotStatus,
@@ -99,6 +100,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Scheduled tick failed" }, { status: 500 });
     }
   }
+
+  // 4.6: make sure this process is consuming the run queue before the job is
+  // sent, so a click cannot queue a run into a queue nobody drains. It is a
+  // no-op after the first call and never blocks the answer on a queue failure.
+  await ensureInProcessRunWorker();
 
   // 4.6: the click queues the run and returns at once. The worker owns the batch
   // from here — a five-minute browser run no longer has to fit in one request.

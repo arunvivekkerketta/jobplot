@@ -2489,3 +2489,84 @@ exercised or red.
   existing `e2e-db.mjs` does the same, since `pnpm` is a `.cmd` shim on Windows.
 - The CI step is unproven here: this machine has no Docker and no GitHub runner, so the workflow
   was validated by parsing the YAML and by running the identical command locally.
+
+## Phase 23 — 4.6 revisited: the run consumer lives in the app process
+
+Phase 19 moved Run onto pg-boss but proved it with a **second** process: Playwright started
+`@jobpilot/worker` on :3101 alongside the app. That proved the queue but not the deployment, which
+runs one web process and needs a click to finish without a companion service being up. The consumer
+now starts inside the web app itself, and the suite no longer starts a worker at all.
+
+| Gate | Sub-Task Name | Observable Outcome | Expected Proof | Status |
+| --- | --- | --- | --- | --- |
+| 4.6g | The app consumes the run queue itself | `instrumentation.node.ts` starts the consumer at boot; the Run route re-asserts it before enqueueing | `next build` compiles; phase7 e2e green with no worker process | [MET] |
+| 4.6h | Same handler, so same stop checks and audits | the in-process consumer registers `makeAutopilotRunHandler()`, the worker's own handler (kill switch, caps, rate limits, `autopilot.run.worker` / `autopilot.run.failed` audits) | `apps/web/test/in-process-worker.test.ts` | [MET] |
+| 4.6i | The e2e suite still verifies a run end to end | phase7 clicks Run, polls `AutopilotRun` to `DONE`, asserts `queued 1` / `submitted 1` / `DAILY_CAP` / `KILL_SWITCH`; no worker webServer in the config | `4 passed (2.5m)`; full suite `39 passed (5.0m)` | [MET] |
+| 4.6j | The consumer is the thing that finishes the run | disabling it (`JOBPILOT_IN_PROCESS_WORKER=0`) makes gate 7.1 fail with the run stuck, then pass again when re-enabled | negative control below | [MET] |
+| 4.6k | One consumer however often it is asked | the module-level promise on `globalThis` makes repeated calls (dev recompiles included) return the same `PgBoss` | `starts exactly one consumer however often it is asked` | [MET] |
+
+### Evidence
+
+```
+$ pnpm --filter @jobpilot/web exec next build
+ ✓ Compiled successfully in 17.1s
+BUILD=0
+
+$ pnpm --filter @jobpilot/web exec playwright test tests/e2e/phase7.spec.ts --reporter=line
+  4 passed (2.5m)
+P7=0
+
+$ pnpm e2e
+  39 passed (5.0m)
+E2E=0
+
+$ pnpm --filter @jobpilot/web exec vitest run
+ ✓ test/in-process-worker.test.ts (7 tests)
+ ✓ test/guard.test.ts (14 tests)
+      Tests  21 passed (21)
+
+$ pnpm lint → 0   pnpm typecheck → 0   pnpm test → 283 passed, 1 skipped
+  (web 21, core 50, apply 65, llm 45, db 24, autopilot 19 + 1 skipped, render 25, sources 34)
+```
+
+### The negative control that makes 4.6i mean something
+
+Playwright's config no longer lists a worker, so a passing run could still have been finished by a
+stray process. It was not: nothing listened on :3101, and with the in-process consumer disabled the
+same gate fails.
+
+```
+$ JOBPILOT_IN_PROCESS_WORKER=0 playwright test tests/e2e/phase7.spec.ts -g "gate 7.1"
+    Error: run cmwjttpp1006ncv60xalumhg4 did not finish within 150s
+  1 failed            P7_DISABLED=1
+
+# re-enabled (the tree committed here)
+$ playwright test tests/e2e/phase7.spec.ts
+  4 passed (2.5m)      P7=0
+```
+
+### Walkthrough
+
+The click still does exactly what Phase 19 made it do — writes an `AutopilotRun`, sends one job and
+answers `202` — but the process that drains that job is now the app that accepted the click. The
+handler is the worker's, so I4's stop checks and I8's audits are not re-implemented, and a redelivery
+is still refused by `startAutopilotRun`'s `WHERE status = 'QUEUED'`. With both the web app and the
+worker container running, pg-boss gives a job to one consumer; the row status makes a second
+execution impossible even if it did not.
+
+### Deviations and limits
+
+- The consumer is started from `instrumentation.node.ts`, not `instrumentation.ts`: Next also
+  compiles the latter for the middleware's edge bundle, where pg's `node:crypto` import cannot
+  resolve (the build fails with `UnhandledSchemeError`). The node-only module is the repository's
+  existing pattern for exactly this.
+- `pg-boss` became a dependency of `@jobpilot/web` (it was already in the lockfile through the
+  worker and `@jobpilot/autopilot`), and is marked external in `serverExternalPackages` plus the
+  webpack externals.
+- Boot-time start is not retried: a failure is logged, the app keeps serving, and the next Run
+  request calls `ensureInProcessRunWorker` again, which does retry.
+- The in-process consumer does not run the cron (`autopilot-tick`), the stale-run sweep or the
+  sources fetch — those stay in the worker container, so a queued run whose process died is still
+  failed by the worker's 30-minute sweep rather than by the web app.
+- The suite no longer exercises `@jobpilot/worker`'s own boot (its health endpoint, its queue
+  wiring); that container is unchanged and still built by the deploy workflow.

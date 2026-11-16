@@ -86,6 +86,14 @@ missing, applies the committed migrations, runs the test there, and exits non-ze
 if the suite skipped instead of running, so a skipped proof cannot be mistaken for
 a green one. CI runs the same command in the `checks` job.
 
+The Run button queues a run rather than driving a browser inside the request, and
+the web app consumes that queue **in its own process** — `instrumentation.node.ts`
+starts the consumer at server boot and the Run route re-asserts it before
+enqueueing, so one running process is enough. The worker container consumes the
+same queue; pg-boss hands each job to exactly one consumer and the run row's status
+is a conditional update, so a second consumer cannot run a batch twice. Set
+`JOBPILOT_IN_PROCESS_WORKER=0` to leave runs to the worker container alone.
+
 GitHub Actions runs the same gates on every push to `main` and every pull request
 (`.github/workflows/ci.yml`): a `pgvector/pgvector:pg16` service container, a
 frozen-lockfile install, migrations plus seed, then `pnpm lint`, `pnpm typecheck`
@@ -151,7 +159,7 @@ throwaway development values, so set `APP_ENCRYPTION_KEY`, `NEXTAUTH_SECRET` and
 
 ```
 apps/web        Next.js 15 App Router UI, Auth.js credentials login, API routes
-apps/worker     pg-boss worker entrypoint
+apps/worker     pg-boss worker entrypoint (cron, sources, and the run queue)
 apps/mock-ats   Local mock applicant-tracking system used by apply tests
 packages/core   Pure domain logic: crypto, profile schema, Fact Index, matching
 packages/db     Prisma schema, migrations, audit, profile, job and match writes

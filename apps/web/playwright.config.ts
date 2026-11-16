@@ -42,7 +42,9 @@ export default defineConfig({
       // Reset the e2e database, then serve the app on its own port so a running
       // `pnpm dev` (developer database, :3000) is never involved.
       // 4.6: the Run button only queues, so the suite needs a live consumer or
-      // the click could never end in a submission.
+      // the click could never end in a submission. That consumer is in this same
+      // process (src/instrumentation.ts), which is why no second server is listed
+      // here: the e2e run proves the in-app worker, not a companion process.
       command: "node scripts/e2e-db.mjs && pnpm exec next dev -p 3100",
       url: BASE_URL,
       reuseExistingServer: false,
@@ -57,22 +59,6 @@ export default defineConfig({
         AUTH_SECRET: process.env.AUTH_SECRET ?? env.NEXTAUTH_SECRET ?? "e2e-secret-not-for-production",
         APP_ENCRYPTION_KEY: env.APP_ENCRYPTION_KEY ?? Buffer.alloc(32, 7).toString("base64"),
         MOCK_ATS_URL,
-      },
-    },
-    {
-      // 4.6: the queue consumer, on its own readiness endpoint. It shares the e2e
-      // database with the app, and the cron is pushed out of the run so scheduled
-      // ticks cannot race the runs each spec requests.
-      command: "pnpm --filter @jobpilot/worker start",
-      url: "http://localhost:3101/healthz",
-      reuseExistingServer: false,
-      timeout: 120_000,
-      env: {
-        ...env,
-        DATABASE_URL: e2eDatabase,
-        WORKER_HEALTH_PORT: "3101",
-        AUTOPILOT_CRON: "0 0 1 1 *",
-        JOB_BOARDS: "",
       },
     },
   ],

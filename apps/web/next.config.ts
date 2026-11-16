@@ -27,7 +27,15 @@ const nextConfig: NextConfig = {
   // Argon2 ships a prebuilt .node binary; webpack cannot parse it.
   // Playwright drives a real browser from the Auto-Pilot route, so it stays a
   // runtime require instead of being pulled into the server bundle.
-  serverExternalPackages: ["@node-rs/argon2", "pdfkit", "docx", "playwright"],
+  serverExternalPackages: [
+    "@node-rs/argon2",
+    "pdfkit",
+    "docx",
+    "playwright",
+    // The in-process Auto-Pilot run consumer (src/instrumentation.ts) opens a
+    // pg-boss pool; bundling it breaks its worker threads and dynamic requires.
+    "pg-boss",
+  ],
   webpack: (config) => {
     // serverExternalPackages alone does not cover imports that flow through
     // the transpiled @jobpilot/db package, so mark the binary external here.
@@ -35,6 +43,12 @@ const nextConfig: NextConfig = {
       ...(Array.isArray(config.externals) ? config.externals : []),
       { "@node-rs/argon2": "commonjs @node-rs/argon2" },
       { playwright: "commonjs playwright" },
+      // The run consumer reaches these from `instrumentation.ts`, which Next
+      // bundles with its own config, so `serverExternalPackages` alone is not
+      // enough: pg's connection string parser `require("fs")`, which a browser
+      // bundle cannot resolve.
+      { "pg-boss": "commonjs pg-boss" },
+      { pg: "commonjs pg" },
     ];
     // The workspace packages use NodeNext-style "./x.js" specifiers for
     // TypeScript sources; teach webpack to resolve them to ./x.ts.
