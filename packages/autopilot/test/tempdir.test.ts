@@ -76,6 +76,10 @@ vi.mock("@jobpilot/db", () => {
     },
     createApplication: async () => ({ id: "app-1", status: "QUEUED" }),
     claimApplication: async () => true,
+    // The run sweeps abandoned claims before choosing candidates; this case has
+    // none, so the sweep is a no-op here.
+    CLAIM_STALE_MS: 30 * 60_000,
+    releaseStaleApplicationClaims: async () => ({ released: 0, ids: [] }),
     releaseApplication: async (id: string) => {
       db.released.push(id);
     },

@@ -3,7 +3,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import PgBoss from "pg-boss";
 import { assertProductionConfig } from "@jobpilot/core";
-import { failStaleAutopilotRuns, saveJobs, writeAudit } from "@jobpilot/db";
+import {
+  CLAIM_STALE_MS,
+  failStaleAutopilotRuns,
+  releaseStaleApplicationClaims,
+  saveJobs,
+  writeAudit,
+} from "@jobpilot/db";
 import { runScheduledTick } from "@jobpilot/autopilot";
 import { AUTOPILOT_RUN_QUEUE, makeAutopilotRunHandler } from "@jobpilot/autopilot/queue";
 import {
@@ -129,6 +135,17 @@ async function main(): Promise<void> {
   await boss.createQueue(AUTOPILOT_RUN_QUEUE);
   await boss.work(AUTOPILOT_RUN_QUEUE, makeAutopilotRunHandler());
   console.log(`[worker] queue ${AUTOPILOT_RUN_QUEUE} consuming on demand`);
+
+  // A killed run can leave an application claimed and RUNNING; nothing selects a
+  // RUNNING row, so without this the posting is stranded for ever (H5).
+  const released = await releaseStaleApplicationClaims({
+    olderThan: new Date(Date.now() - CLAIM_STALE_MS),
+  });
+  if (released.released > 0) {
+    console.log(
+      `[worker] released ${released.released} stale application claim(s) older than 30 minutes`,
+    );
+  }
 
   const stale = await failStaleAutopilotRuns(new Date(Date.now() - STALE_RUN_MS));
   if (stale > 0) console.log(`[worker] failed ${stale} stale run(s) older than 30 minutes`);

@@ -18,7 +18,9 @@ import {
 import { startOfDayInZone, type JsonResumeProfile, type NotifyInput } from "@jobpilot/core";
 import { notifyHumanNeeded } from "./notify.js";
 import {
+  CLAIM_STALE_MS,
   approvedCoPilotByPortal,
+  releaseStaleApplicationClaims,
   claimApplication,
   createApplication,
   listAnswers,
@@ -306,6 +308,13 @@ export async function runAutopilotNow(
   userId: string,
   options: { limit?: number; jobIds?: string[] } = {},
 ): Promise<RunAutopilotResult> {
+  // A run that was killed mid-batch left its rows claimed and RUNNING, and
+  // candidate selection skips those, so nothing would ever retry them. Release
+  // them before choosing this run's candidates (H5).
+  await releaseStaleApplicationClaims({
+    olderThan: new Date(Date.now() - CLAIM_STALE_MS),
+  });
+
   const settings = await settingsFor(userId);
   const profile = await prisma.profile.findUnique({ where: { userId } });
   if (!profile) throw new Error("Import a profile before running Auto-Pilot.");

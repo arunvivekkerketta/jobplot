@@ -319,7 +319,12 @@ export async function createApplication(input: {
   }, TX_OPTIONS);
 }
 
-const CLAIM_STALE_MS = 30 * 60_000;
+/**
+ * How long one run may hold an application before the claim is considered
+ * abandoned. `claimApplication` lets another run take a claim older than this, and
+ * `releaseStaleApplicationClaims` hands such a row back to the queue (H5).
+ */
+export const CLAIM_STALE_MS = 30 * 60_000;
 /** Statuses a run may pick up: anything waiting for another attempt. */
 const CLAIMABLE_STATUSES = ["QUEUED", "PAUSED_NEEDS_HUMAN", "BLOCKED"];
 
@@ -361,6 +366,68 @@ export async function releaseApplication(applicationId: string): Promise<void> {
     where: { id: applicationId, status: "RUNNING" },
     data: { status: "QUEUED", claimedAt: null },
   });
+}
+
+/**
+ * Releases applications a run claimed and never finished — a crashed process, a
+ * killed container, a deploy in the middle of a batch.
+ *
+ * Releasing matters because nothing else would: `claimApplication` can only take a
+ * claim that is *offered* to it, and candidate selection skips a row that is
+ * RUNNING, so without this sweep that posting would be stranded for ever. Each
+ * released row gets an ApplicationEvent and the sweep writes one audit row (I8).
+ */
+export async function releaseStaleApplicationClaims(input: {
+  olderThan: Date;
+}): Promise<{ released: number; ids: string[] }> {
+  return prisma.$transaction(async (tx) => {
+    const stale = await tx.application.findMany({
+      where: { status: "RUNNING", claimedAt: { lt: input.olderThan } },
+      select: { id: true },
+      orderBy: { claimedAt: "asc" },
+      take: 200,
+    });
+
+    const released: string[] = [];
+    for (const row of stale) {
+      // Conditional again: a run may have recorded its result between the read and
+      // this write, and a finished row must not be sent back to the queue.
+      const updated = await tx.application.updateMany({
+        where: {
+          id: row.id,
+          status: "RUNNING",
+          claimedAt: { lt: input.olderThan },
+        },
+        data: { status: "QUEUED", claimedAt: null },
+      });
+      if (updated.count !== 1) continue;
+      released.push(row.id);
+      await tx.applicationEvent.create({
+        data: {
+          applicationId: row.id,
+          type: "CLAIM_RELEASED",
+          payload: {
+            reason: "stale claim",
+            claimedBefore: input.olderThan.toISOString(),
+          },
+        },
+      });
+    }
+
+    if (released.length > 0) {
+      await tx.auditLog.create({
+        data: {
+          actor: "SYSTEM",
+          action: "application.claim.released",
+          entityType: "Application",
+          entityId: released[0] as string,
+          payload: { released: released.length, ids: released },
+        },
+      });
+    }
+
+    return { released: released.length, ids: released };
+  }, TX_OPTIONS);
 }
 
 export interface RecordResultInput {

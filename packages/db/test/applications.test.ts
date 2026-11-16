@@ -1,11 +1,13 @@
 import { afterAll, describe, expect, it, vi } from "vitest";
 import {
+  CLAIM_STALE_MS,
   claimApplication,
   createApplication,
   findApplicationForUser,
   listAnswers,
   prisma,
   releaseApplication,
+  releaseStaleApplicationClaims,
   upsertAnswer,
 } from "../src/index.js";
 
@@ -102,6 +104,83 @@ describe("gate 1.4: one posting is run by one run at a time (H5)", () => {
     expect(stored.status).toBe("QUEUED");
     expect(stored.claimedAt).toBeNull();
     expect(await claimApplication(applicationId)).toBe(true);
+  });
+});
+
+describe("a claim a dead run left behind is released, a live one is not", () => {
+  it("releases a claim older than the run budget", async () => {
+    const applicationId = await makeApplication();
+    expect(await claimApplication(applicationId)).toBe(true);
+
+    // The process that owned this row died 31 minutes ago: past the budget.
+    await prisma.application.update({
+      where: { id: applicationId },
+      data: { claimedAt: new Date(Date.now() - 31 * 60_000) },
+    });
+
+    const swept = await releaseStaleApplicationClaims({
+      olderThan: new Date(Date.now() - CLAIM_STALE_MS),
+    });
+    expect(swept.ids).toContain(applicationId);
+
+    const stored = await prisma.application.findUniqueOrThrow({
+      where: { id: applicationId },
+      select: { status: true, claimedAt: true, events: { select: { type: true } } },
+    });
+    expect(stored.status).toBe("QUEUED");
+    expect(stored.claimedAt).toBeNull();
+    expect(stored.events.map((event) => event.type)).toContain("CLAIM_RELEASED");
+
+    // And the sweep is audited (I8).
+    const audit = await prisma.auditLog.findMany({
+      where: { action: "application.claim.released" },
+      orderBy: { at: "desc" },
+      take: 5,
+      select: { payload: true },
+    });
+    expect(audit.map((row) => JSON.stringify(row.payload)).join(" ")).toContain(applicationId);
+  });
+
+  it("leaves a claim inside the budget alone", async () => {
+    const applicationId = await makeApplication();
+    expect(await claimApplication(applicationId)).toBe(true);
+
+    // Claimed a moment ago: a run may still be driving this row right now.
+    const swept = await releaseStaleApplicationClaims({
+      olderThan: new Date(Date.now() - CLAIM_STALE_MS),
+    });
+    expect(swept.ids).not.toContain(applicationId);
+
+    const stored = await prisma.application.findUniqueOrThrow({
+      where: { id: applicationId },
+      select: { status: true, claimedAt: true },
+    });
+    expect(stored.status).toBe("RUNNING");
+    expect(stored.claimedAt).not.toBeNull();
+  });
+
+  it("does not release a row the run already finished", async () => {
+    const applicationId = await makeApplication();
+    expect(await claimApplication(applicationId)).toBe(true);
+
+    // The result lands first, then a sweep runs with an old cutoff: the row is
+    // SUBMITTED and must not be handed back to the queue.
+    await prisma.application.update({
+      where: { id: applicationId },
+      data: { status: "SUBMITTED", claimedAt: new Date(Date.now() - 31 * 60_000) },
+    });
+
+    const swept = await releaseStaleApplicationClaims({
+      olderThan: new Date(Date.now() - CLAIM_STALE_MS),
+    });
+    expect(swept.ids).not.toContain(applicationId);
+
+    const stored = await prisma.application.findUniqueOrThrow({
+      where: { id: applicationId },
+      select: { status: true, claimedAt: true },
+    });
+    expect(stored.status).toBe("SUBMITTED");
+    expect(stored.claimedAt).not.toBeNull();
   });
 });
 

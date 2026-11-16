@@ -2570,3 +2570,70 @@ execution impossible even if it did not.
   failed by the worker's 30-minute sweep rather than by the web app.
 - The suite no longer exercises `@jobpilot/worker`'s own boot (its health endpoint, its queue
   wiring); that container is unchanged and still built by the deploy workflow.
+
+## Phase 24 — a stale claim cannot strand a posting for ever
+
+`claimApplication` already let a *second* run take a claim older than 30 minutes, but that path was
+unreachable for the case that matters: candidate selection skips a row that is `RUNNING`, so a run
+that died after claiming left the application invisible to every later run and its posting never
+retried. The claim was unrecoverable because nothing was looking at it.
+
+`releaseStaleApplicationClaims({ olderThan })` closes that: it finds `RUNNING` rows whose `claimedAt`
+is older than the run budget, hands each one back to `QUEUED` with a `CLAIM_RELEASED`
+`ApplicationEvent`, and writes one `application.claim.released` audit row for the batch (I8). It is
+called from two places, both of which are "the next thing that happens after a crash":
+
+- `runAutopilotNow`, before it selects candidates — so the next run, button or cron, heals what the
+  previous one stranded;
+- the worker's boot, next to the stale-run sweep — so a restart also clears them.
+
+| Gate | Sub-Task Name | Observable Outcome | Expected Proof | Status |
+| --- | --- | --- | --- | --- |
+| 24a | A stale claim is released | a row claimed 31 minutes ago goes back to `QUEUED` with `claimedAt = null`, a `CLAIM_RELEASED` event and an audit row | `releases a claim older than the run budget` | [MET] |
+| 24b | A fresh claim is untouched | a row claimed moments ago stays `RUNNING` and is not in the sweep's result | `leaves a claim inside the budget alone` | [MET] |
+| 24c | A finished row is never sent back | a `SUBMITTED` row with an old `claimedAt` is not released | `does not release a row the run already finished` | [MET] |
+| 24d | The budget has one source | `CLAIM_STALE_MS` is exported by `@jobpilot/db` and used by `claimApplication`, the sweep in `runAutopilotNow`, and the worker's boot sweep | `grep -n CLAIM_STALE_MS` in all three call sites; typecheck | [MET] |
+| 24e | Runs still behave | the Auto-Pilot gate still submits, caps and stops as before with the sweep in front of it | phase7 `4 passed (2.2m)` | [MET] |
+
+### Evidence
+
+```
+$ pnpm --filter @jobpilot/db exec vitest run test/applications.test.ts
+ ✓ test/applications.test.ts (11 tests) 2167ms
+      Tests  11 passed (11)          # 8 before, 3 added here
+
+$ pnpm lint → 0   pnpm typecheck → 0   pnpm test → 286 passed, 1 skipped
+  (db 27, web 21, core 50, apply 65, llm 45, autopilot 19 + 1 skipped, render 25, sources 34)
+
+$ pnpm --filter @jobpilot/web exec playwright test tests/e2e/phase7.spec.ts --reporter=line
+  4 passed (2.2m)
+```
+
+### The tests were proved to bite
+
+Each rule was removed in turn and the three new cases re-run, then the source restored:
+
+```
+budget ignored (no claimedAt cutoff)          → 1 failed  (leaves a claim inside the budget alone)
+both status guards removed                    → 1 failed  (does not release a row the run already finished)
+only the read's status guard removed          → 3 passed  — the conditional UPDATE still refuses
+only the UPDATE's status guard removed        → 3 passed  — the read still refuses
+```
+
+The last two lines are the honest part: the sweep checks `status = 'RUNNING'` twice — in the read
+and again in the conditional update — so either one alone keeps a finished row out of the queue, and
+a single-guard mutation cannot fail the suite. 24c is proved against the pair, which is why the
+combined mutation is the one quoted.
+
+### Deviations and limits
+
+- The sweep releases at most 200 rows per call (`take: 200`), so a mass crash is healed over several
+  runs rather than in one long transaction.
+- It runs only where it was added: the start of a run and the worker's boot. There is no periodic
+  timer in the web app, so a stranded row waits for the next run or the next worker restart.
+- The released rows go back to `QUEUED` rather than to a new `ABANDONED` status: the run that
+  releases them then treats them exactly like any other candidate, caps and consent checks included.
+- `claimApplication`'s own stale-reclaim stays: it is what protects two runs racing inside the same
+  sweep window.
+- The e2e suite observes the sweep only as "runs still work"; releasing a stale claim is proved at
+  the database level, where the state is controllable.
