@@ -1755,7 +1755,7 @@ plain anchor to `#main`.
 | 4.5 | Tell the user when a human is needed | `formatHumanNeeded` in core; `notifyHumanNeeded` posts codes-only text to an https webhook only, 5 s timeout, every attempt audited as `autopilot.notify`; every non-SUBMITTED outcome is queued in the Auto-Pilot outcome handler and the queue is delivered after the batch, so a slow webhook cannot delay the next posting | `packages/autopilot/test/notify.test.ts` (4 cases: delivered, http refused, not configured, network failure) | [MET] |
 | 4.2 | Earned Auto-Pilot trust ladder | not started | — | [PENDING] |
 | 4.4 | Cover letter, cold email, offer letters | done — see Phase 18 (letters, watermarks, claim re-check) and the 4.4f/4.4g section below (no-model drafting, workspace in a browser) | `core/test/letters.test.ts`, `llm/test/letters.test.ts`, `render/test/letter.test.ts`, phase10 e2e | [MET] |
-| 4.6 | Background "Run" via a queue | done — see the Phase 19 section at the end: the click queues an `AutopilotRun`, the worker executes it, the page polls the row, and the e2e suite starts a real worker | `autopilot/test/queue.test.ts`, phase7 e2e (202 → DONE) | [MET] |
+| 4.6 | Background "Run" via a queue | done — Phases 19, 23 and 27: the click queues an `AutopilotRun`, the app's own process consumes it, the page polls the row and shows the run history built from the `autopilot.run` audit rows | `autopilot/test/queue.test.ts`, `db/test/autopilotRuns.test.ts`, phase7 e2e (202 → DONE → history) | [MET] |
 
 ### Evidence
 
@@ -2785,3 +2785,58 @@ the suite is testing the delimiters, the escaping and the I1 backstop, not merel
 - The suite lives in `@jobpilot/llm` because all three builders do; the app-level callers
   (`apps/web/src/lib/matcher.ts`, the tailor page) are unchanged and still pass their prompts
   through these builders.
+
+## Phase 27 — 4.6 completed: the run history the page shows
+
+Phase 19 moved Run onto the queue and Phase 23 made the app consume it in-process. What was still
+missing from the gate's wording was the *shown* history: the page rendered one summary derived from
+the newest audit row. It now lists the last ten runs, each with what the run recorded — queued,
+submitted, paused, its stop reason and the portals it touched — read straight from the
+`autopilot.run` audit rows, so the history cannot disagree with the record (I8).
+
+| Gate | Sub-Task Name | Observable Outcome | Expected Proof | Status |
+| --- | --- | --- | --- | --- |
+| 4.6l | The run leaves the request path | `POST /api/autopilot {action:"run"}` answers `202 {runId}` and the row is `QUEUED`; no browser opens in the request | phase7's `queueAutopilotRun` asserts `202` before polling | [MET] |
+| 4.6m | A worker executes it, in this process | the app's own consumer registers the shared handler; disabling it leaves runs unfinished | Phase 23 negative control (`JOBPILOT_IN_PROCESS_WORKER=0` → gate 7.1 fails) | [MET] |
+| 4.6n | The outcome is shown | the page polls `GET /api/autopilot/runs/:id` to `DONE` and renders the stored report | phase7 (202 → DONE → report assertions) | [MET] |
+| 4.6o | The history is a list of audited runs | `/autopilot` lists up to ten runs from `autopilot.run` rows: time, queued, submitted, paused, stop reason, portals | phase7 gate 7.7: `run-history` visible, first row matches `queued \d+` and `submitted \d+, paused \d+` | [MET] |
+| 4.6p | The history is per account and survives a bad payload | rows are read by `entityId = userId`; a malformed payload reads as zeros instead of breaking the page | `db/test/autopilotRuns.test.ts` → 4 passed | [MET] |
+
+### Evidence
+
+```
+$ pnpm --filter @jobpilot/db exec vitest run test/autopilotRuns.test.ts
+ ✓ test/autopilotRuns.test.ts (4 tests) 2101ms
+      Tests  4 passed (4)
+
+$ pnpm lint → 0   pnpm typecheck → 0
+$ pnpm test → 314 passed, 1 skipped
+  (db 34, llm 58, apply 73, web 21, core 50, render 25, sources 34, autopilot 19 + 1 skipped)
+
+$ pnpm --filter @jobpilot/web exec playwright test tests/e2e/phase7.spec.ts --reporter=line
+  4 passed (2.4m)
+
+$ pnpm e2e
+  39 passed (5.2m)
+```
+
+### Walkthrough
+
+A click writes `AutopilotRun` + a pg-boss job and returns `202`. The app's consumer (`startInProcessRunWorker`,
+started from `instrumentation.node.ts`, re-asserted by the route) runs the batch, writes the result on
+the row and the `autopilot.run` audit row with `{queued, submitted, paused, stopReason, portals}`. The
+page polls the row for the live result, and `loadAutopilotStatus` reads the audit rows back as
+`history` — newest first — which the panel renders under **Run history**. So the same numbers that
+justify a submission are the numbers the next visit shows, and a run that stopped says why.
+
+### Deviations and limits
+
+- The history is capped at ten runs (`RUN_HISTORY_LIMIT`); the audit trail keeps every row, and the
+  cap is a page concern, not a retention policy.
+- A run that failed before writing its `autopilot.run` row (a worker crash) appears on the page as a
+  `FAILED` run row while polling, and gets the stale sweep, but it has no history entry — history is
+  the audit trail, and the audit trail records finished runs.
+- `AutopilotStatus.lastRun` is kept (now derived from `history[0]`) so existing callers and the e2e
+  assertion for the summary keep working; both read the same rows.
+- Timestamps render in the browser's locale (`toLocaleString`); the raw ISO value stays in the audit
+  trail.

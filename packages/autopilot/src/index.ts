@@ -24,6 +24,7 @@ import {
   claimApplication,
   createApplication,
   listAnswers,
+  listAutopilotRunHistory,
   listSchedulingSettings,
   prisma,
   readDocumentBytes,
@@ -57,13 +58,19 @@ export interface AutopilotStatus {
   portals: PortalStatus[];
   eligible: Array<AutopilotCandidate & { resumeVersionId: string | null }>;
   skipped: SkippedCandidate[];
-  lastRun: {
-    at: string;
-    submitted: number;
-    paused: number;
-    queued: number;
-    stopReason: string | null;
-  } | null;
+  /** The newest run, for callers that only want the last summary. */
+  lastRun: RunHistoryEntry | null;
+  /** Every run still in the audit trail, newest first — the page's run history. */
+  history: RunHistoryEntry[];
+}
+
+export interface RunHistoryEntry {
+  at: string;
+  submitted: number;
+  paused: number;
+  queued: number;
+  stopReason: string | null;
+  portals: string[];
 }
 
 interface StoredCandidate extends AutopilotCandidate {
@@ -215,16 +222,19 @@ export async function loadAutopilotStatus(userId: string): Promise<AutopilotStat
       };
     });
 
-  const lastAudit = await prisma.auditLog.findFirst({
-    // Scoped to this user: a single-row deployment would otherwise show the last
-    // run of whoever happened to trigger one.
-    where: { action: "autopilot.run", entityId: userId },
-    orderBy: { at: "desc" },
-    select: { at: true, payload: true },
-  });
-  const payload = (lastAudit?.payload ?? null) as
-    | { submitted?: number; paused?: number; queued?: number; stopReason?: string | null }
-    | null;
+  // Scoped to this user: a single-row deployment would otherwise show the last
+  // run of whoever happened to trigger one. The rows come from the audit trail,
+  // which every run writes, so the history cannot drift from what was submitted.
+  const history: RunHistoryEntry[] = (
+    await listAutopilotRunHistory({ userId, take: RUN_HISTORY_LIMIT })
+  ).map((row) => ({
+    at: row.at.toISOString(),
+    submitted: row.submitted,
+    paused: row.paused,
+    queued: row.queued,
+    stopReason: row.stopReason,
+    portals: row.portals,
+  }));
 
   return {
     mode: settings.mode,
@@ -236,15 +246,8 @@ export async function loadAutopilotStatus(userId: string): Promise<AutopilotStat
     portals,
     eligible: selection.eligible,
     skipped: selection.skipped,
-    lastRun: lastAudit
-      ? {
-          at: lastAudit.at.toISOString(),
-          submitted: payload?.submitted ?? 0,
-          paused: payload?.paused ?? 0,
-          queued: payload?.queued ?? 0,
-          stopReason: payload?.stopReason ?? null,
-        }
-      : null,
+    lastRun: history[0] ?? null,
+    history,
   };
 }
 
@@ -597,6 +600,9 @@ export type ApproveOutcome =
 
 /** The statuses where a Co-Pilot row is still waiting for the user's decision. */
 const APPROVABLE_STATUSES = ["QUEUED", "PAUSED_NEEDS_HUMAN", "BLOCKED"];
+
+/** How many past runs the page shows; the audit trail keeps all of them. */
+const RUN_HISTORY_LIMIT = 10;
 
 /**
  * "Approve and send" for one Co-Pilot application (4.2).

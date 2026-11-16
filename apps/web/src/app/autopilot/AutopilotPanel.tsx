@@ -356,15 +356,43 @@ export default function AutopilotPanel({ initial }: { initial: AutopilotStatus }
       </div>
 
       <div className="card text-sm" data-testid="autopilot-last-run">
-        <h2 className="font-semibold">Last run</h2>
+        <h2 className="font-semibold">Run history</h2>
         {initial.lastRun ? (
           <p className="mt-2 text-neutral-700">
-            {new Date(initial.lastRun.at).toLocaleString()} — queued {initial.lastRun.queued},
-            submitted {initial.lastRun.submitted}, paused {initial.lastRun.paused}
+            Last run {new Date(initial.lastRun.at).toLocaleString()} — queued{" "}
+            {initial.lastRun.queued}, submitted {initial.lastRun.submitted}, paused{" "}
+            {initial.lastRun.paused}
             {initial.lastRun.stopReason ? `, stopped: ${initial.lastRun.stopReason}` : ""}
           </p>
         ) : (
           <p className="mt-2 text-neutral-600">No Auto-Pilot run yet.</p>
+        )}
+        {initial.history.length > 0 && (
+          <ul className="mt-3 space-y-2" data-testid="run-history">
+            {initial.history.map((run) => (
+              <li
+                key={run.at}
+                className="border-t border-neutral-200 pt-2"
+                data-testid="run-history-row"
+                data-stop={run.stopReason ?? ""}
+              >
+                <span className="text-neutral-500">{new Date(run.at).toLocaleString()}</span>
+                <span className="ml-2">
+                  queued {run.queued}, submitted {run.submitted}, paused {run.paused}
+                </span>
+                {run.stopReason ? (
+                  <span className="ml-2 text-amber-800" data-testid="run-history-stop">
+                    stopped: {run.stopReason}
+                  </span>
+                ) : null}
+                {run.portals.length > 0 ? (
+                  <span className="ml-2 text-neutral-500">
+                    {run.portals.join(", ")}
+                  </span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
         )}
       </div>
     </div>

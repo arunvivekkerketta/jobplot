@@ -284,6 +284,13 @@ test("gate 7.7: the page shows portals, the queue and the last run", async ({ pa
   // The card reports whatever the last run did, so its own summary is what is
   // checked here; the run's numbers are asserted by gate 7.1-7.5 above.
   await expect(page.getByTestId("autopilot-last-run")).toContainText(/queued \d+/);
+  // Gate 4.6: the history is a list of audited runs, not just the newest one, and
+  // each row carries the counts the run recorded.
+  await expect(page.getByTestId("run-history")).toBeVisible();
+  await expect(page.getByTestId("run-history-row").first()).toContainText(/queued \d+/);
+  await expect(page.getByTestId("run-history-row").first()).toContainText(
+    /submitted \d+, paused \d+/,
+  );
 
   // Lock and unlock from the page, and see the row's state change.
   await page.getByTestId("portal-lock").first().click();

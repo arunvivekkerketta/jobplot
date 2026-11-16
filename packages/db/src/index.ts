@@ -1124,6 +1124,55 @@ export async function listSchedulingSettings(): Promise<
 }
 
 /** 4.6: the row a queued run is tracked by, created before the job is sent. */
+/** One audited run, as the Auto-Pilot page shows it. */
+export interface AutopilotRunHistoryRow {
+  at: Date;
+  queued: number;
+  submitted: number;
+  paused: number;
+  stopReason: string | null;
+  portals: string[];
+}
+
+/**
+ * The last N runs for one account, newest first, read from the `autopilot.run`
+ * audit rows the run itself writes. The audit trail is the record, so the history
+ * can never disagree with what was submitted (I8).
+ */
+export async function listAutopilotRunHistory(input: {
+  userId: string;
+  take?: number;
+}): Promise<AutopilotRunHistoryRow[]> {
+  const rows = await prisma.auditLog.findMany({
+    where: { action: "autopilot.run", entityId: input.userId },
+    orderBy: { at: "desc" },
+    take: input.take ?? 20,
+    select: { at: true, payload: true },
+  });
+
+  return rows.map((row) => {
+    const payload = (row.payload ?? {}) as {
+      queued?: unknown;
+      submitted?: unknown;
+      paused?: unknown;
+      stopReason?: unknown;
+      portals?: unknown;
+    };
+    const count = (value: unknown): number =>
+      typeof value === "number" && Number.isFinite(value) ? value : 0;
+    return {
+      at: row.at,
+      queued: count(payload.queued),
+      submitted: count(payload.submitted),
+      paused: count(payload.paused),
+      stopReason: typeof payload.stopReason === "string" ? payload.stopReason : null,
+      portals: Array.isArray(payload.portals)
+        ? payload.portals.filter((portal): portal is string => typeof portal === "string")
+        : [],
+    };
+  });
+}
+
 export async function createAutopilotRun(input: {
   userId: string;
   limit?: number;
