@@ -517,6 +517,9 @@ export async function runAutopilotNow(
             actions: outcome.actions,
             ...(outcome.reason ? { reason: outcome.reason } : {}),
             ...(outcome.submissionText ? { submissionText: outcome.submissionText } : {}),
+            // Which questions blocked the run, so the Answer Bank coverage report
+            // can name the entry that would have prevented it (4.10).
+            needsHuman: outcome.needsHuman,
           });
 
           // Anything a human must finish is announced, with codes only (I5/I7).
@@ -754,6 +757,10 @@ export async function runApprovedApplication(
         actions: result.actions,
         ...(result.reason ? { reason: result.reason } : {}),
         ...(result.submissionText ? { submissionText: result.submissionText } : {}),
+        needsHuman: result.needsHuman.map((field) => ({
+          key: field.key,
+          reason: field.reason ?? "needs a human answer",
+        })),
       });
 
       await writeAudit({

@@ -2637,3 +2637,82 @@ combined mutation is the one quoted.
   sweep window.
 - The e2e suite observes the sweep only as "runs still work"; releasing a stale claim is proved at
   the database level, where the state is controllable.
+
+## Phase 25 — the Answer Bank coverage loop
+
+Auto-Pilot already told the human when it stopped (`autopilot.notify` audit rows), but the reasons
+were write-only: nothing turned them into the one thing that would fix the next attempt. The Answer
+Bank page now reads those audited stops, groups them by reason, and names the entry that would have
+prevented each answerable one, linking straight into a form that is already filled in.
+
+Two sources feed it, both audited:
+
+- `autopilot.notify` rows (`entityType: Settings`, `entityId: userId`, payload `{code, delivered}`)
+  group the stop reasons;
+- the application's own `NEEDS_HUMAN` events, which are new: `runApplication` always returned the
+  unanswered fields, but nothing stored them. `AutopilotOutcome` now carries `{key, reason}` per
+  field — **keys and the planner's reason only**, never a label (page text, I2) and never a value —
+  and `recordApplicationResult` writes one `NEEDS_HUMAN` event per field.
+
+`buildAnswerCoverage` (pure, in `@jobpilot/apply`) maps a stop code to where it is fixed
+(`NEEDS_HUMAN_FIELDS` → `#answer-form`, `NO_APPROVED_RESUME` → `/tailor`, caps and the kill switch →
+`/settings`, an unknown code → a plain note and no link) and proposes one entry per missing key that
+the account does not already have, with `addHref = /answers?key=…&questionPattern=…#answer-form`.
+
+| Gate | Sub-Task Name | Observable Outcome | Expected Proof | Status |
+| --- | --- | --- | --- | --- |
+| 4.10a | Stops are grouped by reason | the report lists each code once, with its count and the newest occurrence, most frequent first | `groups the audited stops by reason, most frequent first` | [MET] |
+| 4.10b | The entry that would have prevented it | a missing key becomes a suggestion with its count and a human pattern | `names the missing key and links to the prefilled add form` | [MET] |
+| 4.10c | Only what is actually missing | a key already in the Answer Bank is not proposed, however it was cased or spaced | `does not propose a key the Answer Bank already has`, `normalises the key before comparing and proposing` | [MET] |
+| 4.10d | Stops no answer can fix | resume/cap/kill-switch codes say where they are fixed; an unknown code keeps its count with no link | `keeps a stop with no Answer Bank fix, and says where it is fixed` | [MET] |
+| 4.10e | The loop is fed by audited data only, per account | notify stops are read by `entityId = userId`; missing keys join through `application.userId` | `packages/db/test/coverage.test.ts` → 3 passed (owner/other separation, window) | [MET] |
+| 4.10f | The link lands on a page that adds the answer | `/answers?key=…&questionPattern=…` prefills the form and says why | phase6 e2e: `answer-key` has value `salary_expectation`, `answer-pattern` `salary|compensation` | [MET] |
+| 4.10g | The page shows it | the Answer Bank page renders the coverage report with its summary | phase6 e2e: `coverage-report` / `coverage-summary` visible | [MET] |
+| 4.10h | Nothing else regressed | the run path still records results and the suite is green | `pnpm test` 297 passed / 1 skipped; phase6 `2 passed (1.2m)` | [MET] |
+
+### Evidence
+
+```
+$ pnpm --filter @jobpilot/apply exec vitest run test/coverage.test.ts
+      Tests  8 passed (8)
+
+$ pnpm --filter @jobpilot/db exec vitest run test/coverage.test.ts
+ ✓ test/coverage.test.ts (3 tests) 2137ms
+      Tests  3 passed (3)
+
+$ pnpm lint → 0   pnpm typecheck → 0
+$ pnpm test → 297 passed, 1 skipped
+  (apply 73, db 30, web 21, core 50, llm 45, render 25, sources 34, autopilot 19 + 1 skipped)
+
+$ pnpm --filter @jobpilot/web exec playwright test tests/e2e/phase6.spec.ts --reporter=line
+  2 passed (1.2m)
+```
+
+Two test bugs were found by running them, not by reading them: `lastAt` was compared against a
+second `Date.now()` (a millisecond apart) and the "already answered" case used `work_authorization`,
+which is **not** the canonical key `answerFor` matches (`work_auth`) — so the case now uses a
+casing/spacing variant that normalization genuinely folds.
+
+### Walkthrough
+
+A run pauses on a salary question → `runApplication` returns `needsHuman: [{key: "salary_expectation",
+reason: "sensitive question with no Answer Bank entry…"}]` → `AutopilotOutcome.needsHuman` carries it
+→ `recordApplicationResult` writes a `NEEDS_HUMAN` event → the notify call writes
+`autopilot.notify{code: "NEEDS_HUMAN_FIELDS"}` → the Answer Bank page reads both for that user,
+counts, and offers `salary_expectation` with `Add this answer` → the click opens `/answers` with the
+key and the `salary|compensation` pattern already in the form, and the panel says why.
+
+### Deviations and limits
+
+- The audit's `code` is the runner's stop reason, not the field: grouping "by reason" is therefore by
+  stop code, and the per-question detail comes from the `NEEDS_HUMAN` events added here. Stops
+  recorded before this change have a code but no keys, so they appear in the groups and produce no
+  suggestions.
+- The window is 30 days (`COVERAGE_WINDOW_DAYS`) and the reads are capped (200 stops, 500 events).
+- The e2e suite proves the page and the prefill, not a populated suggestion list: no e2e run leaves a
+  `NEEDS_HUMAN` stop in the suite database, so the suggestion branch is proved by the unit tests and
+  by the database test instead.
+- The suggested pattern is a heuristic per key (`salary|compensation|…`, `work(ing)?\s+authori[sz]ation|visa|sponsor`)
+  so the entry is likely to match; the user can edit it before saving.
+- `NEEDS_HUMAN` events store the planner's own reason string, never the page's label and never a
+  value (I2/I5/I7).

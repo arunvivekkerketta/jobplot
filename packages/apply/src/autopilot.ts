@@ -264,6 +264,12 @@ export interface AutopilotOutcome {
   reason?: string;
   actions: RunAction[];
   submissionText?: string;
+  /**
+   * The questions only a human could answer, without any value: the key, and the
+   * planner's own reason. The label is page text (I2), so it stays out of here —
+   * the Answer Bank coverage report only needs to know which key was missing.
+   */
+  needsHuman: Array<{ key: string | null; reason: string }>;
 }
 
 export interface RunAutopilotOptions {
@@ -336,6 +342,10 @@ export async function runAutopilot(options: RunAutopilotOptions): Promise<Autopi
         portal: target.portal,
         status: result.status,
         actions: result.actions,
+        needsHuman: result.needsHuman.map((field) => ({
+          key: field.key,
+          reason: field.reason ?? "needs a human answer",
+        })),
         ...(result.reason ? { reason: result.reason } : {}),
         ...(result.submissionText ? { submissionText: result.submissionText } : {}),
       };
@@ -349,6 +359,7 @@ export async function runAutopilot(options: RunAutopilotOptions): Promise<Autopi
         status: "ERROR",
         reason: error instanceof Error ? error.message : "unknown browser error",
         actions: [],
+        needsHuman: [],
       };
       outcomes.push(outcome);
       await options.onOutcome?.(outcome);

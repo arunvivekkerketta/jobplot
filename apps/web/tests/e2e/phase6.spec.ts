@@ -141,6 +141,18 @@ test("gate 6.1-6.5: tailoring, the approval gate and the Answer Bank end to end"
 
   await page.goto("/answers");
   await expect(page.getByTestId("answers-page")).toBeVisible();
+
+  // Gate 4.10: the Answer Bank page carries the coverage loop, and the link it
+  // offers prefills the entry a stop asked for.
+  await expect(page.getByTestId("coverage-report")).toBeVisible();
+  await expect(page.getByTestId("coverage-summary")).toContainText(/Auto-Pilot/);
+  await page.goto(
+    "/answers?key=salary_expectation&questionPattern=salary%7Ccompensation#answer-form",
+  );
+  await expect(page.getByTestId("answer-prefill")).toContainText("salary_expectation");
+  await expect(page.getByTestId("answer-key")).toHaveValue("salary_expectation");
+  await expect(page.getByTestId("answer-pattern")).toHaveValue("salary|compensation");
+  await page.goto("/answers");
   await page.getByTestId("answer-key").fill(`notice_${stamp}`);
   await page.getByTestId("answer-value").fill("One month");
   await page.getByTestId("answer-sensitive").check();

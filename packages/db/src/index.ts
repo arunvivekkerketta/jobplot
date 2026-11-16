@@ -436,6 +436,8 @@ export interface RecordResultInput {
   actions: ApplicationAction[];
   reason?: string;
   submissionText?: string;
+  /** The questions the run could not answer: keys and reasons, never values. */
+  needsHuman?: Array<{ key: string | null; reason: string }>;
 }
 
 /**
@@ -464,6 +466,10 @@ export async function recordApplicationResult(
               type: "STATUS",
               payload: { status: input.status, reason: input.reason ?? null },
             },
+            ...(input.needsHuman ?? []).map((field) => ({
+              type: "NEEDS_HUMAN",
+              payload: { key: field.key, reason: field.reason },
+            })),
             ...input.actions.map((action) => ({
               type: action.kind,
               payload: { detail: action.detail, field: action.field ?? null },
@@ -876,6 +882,68 @@ export async function listAnswers(userId: string) {
       console.warn(`answer.decrypt_failed id=${row.id}`);
       return { ...row, answer: "" };
     }
+  });
+}
+
+/**
+ * The audited Auto-Pilot stop notifications for one account (the Answer Bank
+ * coverage loop's input). Scoped to the user twice over: `autopilot.notify` rows
+ * record the account as their entity, and the account is the entity id.
+ */
+export async function listNotifyStops(input: {
+  userId: string;
+  since: Date;
+  take?: number;
+}): Promise<Array<{ code: string; delivered: boolean; at: Date }>> {
+  const rows = await prisma.auditLog.findMany({
+    where: {
+      action: "autopilot.notify",
+      entityType: "Settings",
+      entityId: input.userId,
+      at: { gte: input.since },
+    },
+    orderBy: { at: "desc" },
+    take: input.take ?? 200,
+    select: { payload: true, at: true },
+  });
+
+  return rows.map((row) => {
+    const payload = (row.payload ?? {}) as { code?: unknown; delivered?: unknown };
+    return {
+      code: typeof payload.code === "string" && payload.code.length > 0 ? payload.code : "UNKNOWN",
+      delivered: payload.delivered === true,
+      at: row.at,
+    };
+  });
+}
+
+/**
+ * The questions the runs could not answer, taken from the application events
+ * those runs recorded. Joined through the application so another account's rows
+ * can never appear.
+ */
+export async function listMissingAnswerKeys(input: {
+  userId: string;
+  since: Date;
+  take?: number;
+}): Promise<Array<{ key: string | null; at: Date }>> {
+  const rows = await prisma.applicationEvent.findMany({
+    where: {
+      type: "NEEDS_HUMAN",
+      at: { gte: input.since },
+      application: { userId: input.userId },
+    },
+    orderBy: { at: "desc" },
+    take: input.take ?? 500,
+    select: { payload: true, at: true },
+  });
+
+  return rows.map((row) => {
+    const payload = (row.payload ?? {}) as { key?: unknown };
+    return {
+      key: typeof payload.key === "string" && payload.key.length > 0 ? payload.key : null,
+      at: row.at,
+    };
   });
 }
 

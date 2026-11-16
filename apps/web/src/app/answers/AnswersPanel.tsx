@@ -11,7 +11,19 @@ export interface AnswerEntry {
   sensitive: boolean;
 }
 
-export default function AnswersPanel({ initial }: { initial: AnswerEntry[] }) {
+export interface AnswerPrefill {
+  key?: string;
+  questionPattern?: string;
+}
+
+export default function AnswersPanel({
+  initial,
+  prefill,
+}: {
+  initial: AnswerEntry[];
+  /** Set by a coverage-report link: the key and pattern it explained. */
+  prefill?: AnswerPrefill;
+}) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState<string | null>(null);
@@ -72,7 +84,13 @@ export default function AnswersPanel({ initial }: { initial: AnswerEntry[] }) {
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
-      <form className="card space-y-3" onSubmit={save} data-testid="answer-form">
+      <form id="answer-form" className="card space-y-3" onSubmit={save} data-testid="answer-form">
+        {prefill?.key && (
+          <p className="text-sm text-neutral-700" data-testid="answer-prefill">
+            Adding <span className="font-medium">{prefill.key}</span>, because a run stopped on
+            it.
+          </p>
+        )}
         <label className="text-sm">
           <span className="mb-1 block font-medium text-neutral-600">Key</span>
           <input
@@ -80,6 +98,7 @@ export default function AnswersPanel({ initial }: { initial: AnswerEntry[] }) {
             required
             placeholder="work_auth"
             className="input"
+            defaultValue={prefill?.key ?? ""}
             data-testid="answer-key"
           />
         </label>
@@ -98,6 +117,7 @@ export default function AnswersPanel({ initial }: { initial: AnswerEntry[] }) {
           </span>
           <input
             name="questionPattern"
+            defaultValue={prefill?.questionPattern ?? ""}
             placeholder="salary\\s+expectations"
             className="input"
             data-testid="answer-pattern"
