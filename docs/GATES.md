@@ -1869,3 +1869,47 @@ on the stored text, so a hand-edited letter is caught at the moment it becomes f
   fact-only sentence instead of weakening the check.
 - The phase 4 / applications panel cleanup (the duplicated action log) rides along in this
   commit.
+
+## Gate 1.7b — compose secret interpolation (closed without Docker)
+
+**Status: [CLOSED — the file-level property is proven; Docker's own validator was never run here.]**
+
+Plainly: this machine has no Docker (`docker: command not found`, re-checked 2026-11-16, alongside
+`docker-compose: not found`), so `docker compose config` has never been executed for this
+repository and this document does not claim otherwise. The gate is closed on the property that
+makes Compose refuse to start, proven directly against the file, with the residual gap stated.
+
+| What is proven | How | Evidence |
+| --- | --- | --- |
+| Every required secret uses the required form `${VAR:?message}`: `APP_ENCRYPTION_KEY` ×1, `NEXTAUTH_SECRET` ×2, `POSTGRES_PASSWORD` ×2, `ADMIN_PASSWORD` ×1 | `scripts/check-compose-secrets.mjs` parses every `${…}` reference and fails on a bare form or a `:-` default | all six references reported `all required-form` |
+| No required secret has a literal value in the file | same script: `^\s*NAME\s*:\s*(?!\$\{\|\*)` must not match | no failures |
+| An empty environment refuses, and names the variable | the script applies Compose's documented rules (`:?` fails when unset/empty, `:-` falls back, bare becomes empty) to the whole file | `empty environment refused, naming POSTGRES_PASSWORD` |
+| Each secret on its own also refuses, under its own name | expansion with all four set except one, four times | four `refused by name when unset` lines |
+| The happy path still works | expansion with all four set produces `postgresql://jobpilot:value-for-POSTGRES_PASSWORD@db:5432/jobpilot` | no failure reported |
+| The checker can fail | `--self-test` mutates a copy to `${POSTGRES_PASSWORD:-changeme}` and requires rejection | `self-test ok: … was rejected (1 failure(s))` |
+
+```
+$ node scripts/check-compose-secrets.mjs --self-test
+docker-compose.yml: 25 interpolation(s), 6 on required secrets
+  ok   APP_ENCRYPTION_KEY: 1 reference(s), all required-form
+  ok   NEXTAUTH_SECRET: 2 reference(s), all required-form
+  ok   POSTGRES_PASSWORD: 2 reference(s), all required-form
+  ok   ADMIN_PASSWORD: 1 reference(s), all required-form
+  ok   empty environment refused, naming POSTGRES_PASSWORD
+  ok   APP_ENCRYPTION_KEY on its own: refused by name when unset
+  ok   NEXTAUTH_SECRET on its own: refused by name when unset
+  ok   POSTGRES_PASSWORD on its own: refused by name when unset
+  ok   ADMIN_PASSWORD on its own: refused by name when unset
+self-test ok: a mutated copy with ${POSTGRES_PASSWORD:-changeme} was rejected (1 failure(s))
+OK: the stack cannot start without the four secrets
+EXIT=0
+```
+
+What is **not** proven, and cannot be on this machine: that Docker's own parser agrees with this
+reading — that `docker compose config` exits non-zero and prints the same message, that the compose
+schema accepts every other field, and that the stack actually starts once the secrets exist. Those
+require the docker binary. Run `docker compose config` (twice: once with no `.env`, once with the
+four secrets set) on a machine that has it before trusting the stack in production.
+
+The script re-runs in under a second and needs only Node, so it is safe to keep in CI next to the
+other repository checks.
