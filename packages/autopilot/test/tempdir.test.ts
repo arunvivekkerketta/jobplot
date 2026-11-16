@@ -28,7 +28,6 @@ vi.mock("playwright", async () => {
 const db = vi.hoisted(() => ({
   audits: [] as Array<Record<string, unknown>>,
   released: [] as string[],
-  claims: 0,
 }));
 
 vi.mock("@jobpilot/db", () => {
@@ -74,25 +73,18 @@ vi.mock("@jobpilot/db", () => {
         findMany: async () => [{ id: "version-1", jobId: "job-1", pdfPath: "documents/doc-1.pdf" }],
       },
       application: { findMany: async () => [] },
-      job: { groupBy: async () => [] },
-      auditLog: { findFirst: async () => null },
     },
     createApplication: async () => ({ id: "app-1", status: "QUEUED" }),
-    claimApplication: async () => {
-      db.claims += 1;
-      return true;
-    },
+    claimApplication: async () => true,
     releaseApplication: async (id: string) => {
       db.released.push(id);
     },
     listAnswers: async () => [],
     readDocumentBytes: async () => ({ bytes: Buffer.from("%PDF-1.4 test"), format: "pdf" }),
-    recordApplicationResult: async () => ({ id: "app-1", status: "SUBMITTED", events: 0 }),
     submissionCounts: async () => ({ total: 0, byPortal: {}, lastByPortal: {} }),
     writeAudit: async (entry: Record<string, unknown>) => {
       db.audits.push(entry);
     },
-    approvedCoPilotByPortal: async () => ({ manual: 3 }),
   };
 });
 
@@ -105,7 +97,6 @@ beforeEach(() => {
   state.existedAtThrow = false;
   db.audits.length = 0;
   db.released.length = 0;
-  db.claims = 0;
   const actual = fs.mkdtempSync.bind(fs);
   spy = vi.spyOn(fs, "mkdtempSync").mockImplementation(((prefix: string) => {
     const dir = actual(prefix);

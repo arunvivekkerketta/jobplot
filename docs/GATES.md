@@ -2062,6 +2062,16 @@ plain `pnpm test` cannot write into a developer's own data:
 
 `pnpm lint` → exit 0 (no warnings); `pnpm typecheck` → exit 0.
 
+The unit variant's `@jobpilot/db` mock now doubles only what the failure path calls —
+`settings.upsert`, `profile.findUnique`, `matchScore.findMany`, `resumeVersion.findMany`,
+`application.findMany`, plus `createApplication`, `claimApplication`, `listAnswers`,
+`readDocumentBytes`, `releaseApplication` and `writeAudit`. Removed: `job.groupBy`,
+`auditLog.findFirst` (both belong to the status view), `recordApplicationResult` (no outcome exists
+on this path), `approvedCoPilotByPortal` (portal policy), and an unused claim counter. The
+`existedAtThrow` assertion and the real `fs` checks stay, and the test still notices a missing
+`fs.rmSync`: with the cleanup commented out it fails `AssertionError: expected true to be false`
+(`MUTATED_EXIT=1`), and passes again once restored.
+
 ## Review pass — Stage 3, with fresh eyes
 
 No gate changed. What was already clean, and what was not:
