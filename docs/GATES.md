@@ -1708,3 +1708,40 @@ Deviations from the brief:
   requested failure-path test would need the database, the run's candidate
   selection and a mocked `playwright` module; I did not write it, so the gate stays
   open rather than being claimed.
+
+## Phase 15 — Stage 3 accessibility and design
+
+### GATES LEDGER
+
+| Gate | Sub-Task Name | Observable Outcome | Expected Proof | Status |
+| --- | --- | --- | --- | --- |
+| 3.1 | Label the two checkboxes | Both switches resolve by label; an empty cap is refused inline; server issues name their field | `getByLabel` e2e + `dailyCap-error` | [MET] |
+| 3.2 | Per-page titles | Tabs read "Jobs · JobPilot", "Settings · JobPilot" | `toHaveTitle` e2e | [MET] |
+| 3.3 | Autocomplete tokens | `username` / `current-password` on the sign-in fields | attribute assertions | [MET] |
+| 3.4 | Announce status messages | 10 live regions across the panels | `grep -rn 'role="status"'` = 10 | [MET] |
+| 3.5 | Visible control borders | 4.74:1 boundary, one focus ring | `node scripts/contrast.mjs` exit 0 | [MET] |
+| 3.6 | Navigation | Skip link is the first Tab stop; current page carries `aria-current`; menu collapses under 768px | keyboard e2e | [MET] |
+| 3.7 | Table headers | Zero `<th>` without `scope="col"`; empty header gets a screen-reader label | grep = 0 | [MET] |
+| 3.8 | Remaining polish | Error/not-found/loading pages, relative dates with exact titles, word-based match strength, empty states | `/does-not-exist` e2e | [MET] |
+
+### Evidence
+
+```
+pnpm --filter @jobpilot/web typecheck → clean
+pnpm lint → clean
+node scripts/contrast.mjs "#737373" "#ffffff"
+  #737373 on #ffffff: 4.74:1 (UI boundary needs 3.0:1)   exit 0
+grep -rn '<th ' apps/web/src/app | grep -vc 'scope="col"' → 0
+grep -rn 'role="status"' apps/web/src/app --include=*.tsx | wc -l → 10
+pnpm test → TOTAL=223
+pnpm e2e → 35 passed (3.1m)   # 30 previous + 5 new accessibility cases
+```
+
+`apps/web/tests/e2e/phase9-a11y.spec.ts` holds the five new cases: page titles,
+the skip link receiving focus on the first Tab press and `aria-current="page"` on
+the active nav item, `getByLabel` on both switches plus the empty-cap inline
+error, the two autocomplete tokens, and the not-found page.
+
+The navigation moved into `apps/web/src/app/NavLinks.tsx` so the active state can
+use `usePathname`; the header keeps a client-free layout and the skip link stays a
+plain anchor to `#main`.

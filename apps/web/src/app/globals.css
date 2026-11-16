@@ -1,11 +1,16 @@
 @import "tailwindcss";
 
-:root {
-  color-scheme: light dark;
-}
+/* The app is light-only: a dark-mode declaration here would leave text on a
+   light background when the OS prefers dark. */
 
 body {
   @apply bg-neutral-50 text-neutral-900 antialiased;
+}
+
+/* One visible focus ring for every interactive element (A5). */
+:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
 }
 
 .card {
@@ -17,15 +22,17 @@ body {
 }
 
 .btn-secondary {
-  @apply inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-colors border border-neutral-300 bg-white text-neutral-800 hover:bg-neutral-100 disabled:opacity-50;
+  @apply inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-colors border border-neutral-500 bg-white text-neutral-800 hover:bg-neutral-100 disabled:opacity-50;
 }
 
 .btn-danger {
   @apply inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-colors bg-red-600 text-white hover:bg-red-700 disabled:opacity-50;
 }
 
+/* neutral-500 on white is 4.7:1, so the control boundary itself is visible;
+   neutral-300 was 1.48:1, below the 3:1 that a UI boundary needs (A5). */
 .input {
-  @apply w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100;
+  @apply w-full rounded-md border border-neutral-500 bg-white px-3 py-2 text-sm focus:outline-2 focus:outline-offset-2 focus:outline-blue-600;
 }
 
 .badge-green {

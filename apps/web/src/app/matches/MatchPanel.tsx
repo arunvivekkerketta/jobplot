@@ -59,7 +59,7 @@ export default function MatchPanel() {
         </p>
       )}
       {result && (
-        <p className="mt-2 text-sm text-green-700" data-testid="recompute-result">
+        <p className="mt-2 text-sm text-green-700" role="status" aria-live="polite" data-testid="recompute-result">
           {result}
         </p>
       )}

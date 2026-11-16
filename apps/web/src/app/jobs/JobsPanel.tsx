@@ -173,7 +173,7 @@ export default function JobsPanel() {
           </p>
         )}
         {importResult && (
-          <p className="text-sm text-green-700" data-testid="import-result">
+          <p className="text-sm text-green-700" role="status" aria-live="polite" data-testid="import-result">
             {importResult}
           </p>
         )}
@@ -242,7 +242,7 @@ export default function JobsPanel() {
           </p>
         )}
         {fetchResult && (
-          <p className="text-sm text-green-700" data-testid="fetch-result">
+          <p className="text-sm text-green-700" role="status" aria-live="polite" data-testid="fetch-result">
             {fetchResult}
           </p>
         )}

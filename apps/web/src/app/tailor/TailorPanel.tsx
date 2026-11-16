@@ -108,7 +108,7 @@ export default function TailorPanel({
           </p>
         )}
         {result && (
-          <div className="text-sm text-green-800" data-testid="tailor-result">
+          <div className="text-sm text-green-800" role="status" aria-live="polite" data-testid="tailor-result">
             <p>
               Tailored with {result.validation?.checkedClaims ?? 0} claims checked
               ({result.source}) — coverage {result.keywordReport?.initialCoverage}% →{

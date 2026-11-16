@@ -38,6 +38,7 @@ export default function LoginForm() {
           id="email"
           name="email"
           type="email"
+          autoComplete="username"
           required
           className="input"
           value={email}
@@ -50,6 +51,7 @@ export default function LoginForm() {
           id="password"
           name="password"
           type="password"
+          autoComplete="current-password"
           required
           className="input"
           value={password}

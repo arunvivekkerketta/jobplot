@@ -1,5 +1,7 @@
 import ImportForm from "./ImportForm";
 
+export const metadata = { title: "Import profile" };
+
 export const dynamic = "force-dynamic";
 
 export default function ImportPage() {

@@ -2,6 +2,8 @@ import { listAnswers } from "@jobpilot/db";
 import { requireUser } from "@/lib/session";
 import AnswersPanel from "./AnswersPanel";
 
+export const metadata = { title: "Answers" };
+
 export const dynamic = "force-dynamic";
 
 export default async function AnswersPage() {

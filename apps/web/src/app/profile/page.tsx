@@ -3,6 +3,8 @@ import { prisma } from "@jobpilot/db";
 import { requireUser } from "@/lib/session";
 import { summarizeProfile } from "@/lib/factsSummary";
 
+export const metadata = { title: "Profile" };
+
 export const dynamic = "force-dynamic";
 
 export default async function ProfilePage() {

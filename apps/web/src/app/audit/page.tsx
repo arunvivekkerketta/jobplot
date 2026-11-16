@@ -1,5 +1,8 @@
 import { prisma } from "@jobpilot/db";
+import { exactTime, relativeTime } from "@/lib/time";
 import { requireUser } from "@/lib/session";
+
+export const metadata = { title: "Audit" };
 
 export const dynamic = "force-dynamic";
 
@@ -52,18 +55,18 @@ export default async function AuditPage({
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b text-xs uppercase text-neutral-500">
-              <th className="py-2 pr-4">At</th>
-              <th className="py-2 pr-4">Actor</th>
-              <th className="py-2 pr-4">Action</th>
-              <th className="py-2 pr-4">Entity</th>
-              <th className="py-2">Payload</th>
+              <th scope="col" className="py-2 pr-4">At</th>
+              <th scope="col" className="py-2 pr-4">Actor</th>
+              <th scope="col" className="py-2 pr-4">Action</th>
+              <th scope="col" className="py-2 pr-4">Entity</th>
+              <th scope="col" className="py-2">Payload</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((row) => (
               <tr key={row.id} className="border-b border-neutral-100">
                 <td className="py-2 pr-4 whitespace-nowrap text-xs text-neutral-500">
-                  {row.at.toISOString().replace("T", " ").slice(0, 19)}
+                  <span title={exactTime(row.at)}>{relativeTime(row.at)}</span>
                 </td>
                 <td className="py-2 pr-4">
                   <span className={row.actor === "LLM" ? "badge-red" : "badge-gray"}>

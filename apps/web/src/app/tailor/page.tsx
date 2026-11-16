@@ -2,6 +2,8 @@ import { listResumeVersions, prisma } from "@jobpilot/db";
 import { requireUser } from "@/lib/session";
 import TailorPanel from "./TailorPanel";
 
+export const metadata = { title: "Tailor" };
+
 export const dynamic = "force-dynamic";
 
 export default async function TailorPage() {

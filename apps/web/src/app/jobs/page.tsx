@@ -1,6 +1,9 @@
 import { prisma } from "@jobpilot/db";
 import { requireUser } from "@/lib/session";
+import { exactTime, relativeTime } from "@/lib/time";
 import JobsPanel from "./JobsPanel";
+
+export const metadata = { title: "Jobs" };
 
 export const dynamic = "force-dynamic";
 
@@ -57,13 +60,13 @@ export default async function JobsPage() {
           <table className="mt-3 w-full text-sm" data-testid="jobs-table">
             <thead>
               <tr className="text-left text-neutral-500">
-                <th className="pb-2 font-medium">Role</th>
-                <th className="pb-2 font-medium">Company</th>
-                <th className="pb-2 font-medium">Source</th>
-                <th className="pb-2 font-medium">Location</th>
-                <th className="pb-2 font-medium">Salary</th>
-                <th className="pb-2 font-medium">Posted</th>
-                <th className="pb-2 font-medium" />
+                <th scope="col" className="pb-2 font-medium">Role</th>
+                <th scope="col" className="pb-2 font-medium">Company</th>
+                <th scope="col" className="pb-2 font-medium">Source</th>
+                <th scope="col" className="pb-2 font-medium">Location</th>
+                <th scope="col" className="pb-2 font-medium">Salary</th>
+                <th scope="col" className="pb-2 font-medium">Posted</th>
+                <th scope="col" className="pb-2 font-medium"><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>
@@ -82,9 +85,12 @@ export default async function JobsPage() {
                     {salaryRange(job.salaryMin, job.salaryMax)}
                   </td>
                   <td className="py-2 text-neutral-600">
-                    {(job.postedAt ?? job.fetchedAt)
-                      .toISOString()
-                      .slice(0, 10)}
+                    <span
+                      title={exactTime(job.postedAt ?? job.fetchedAt)}
+                      data-testid="job-posted"
+                    >
+                      {relativeTime(job.postedAt ?? job.fetchedAt)}
+                    </span>
                   </td>
                   <td className="py-2 text-right">
                     <a

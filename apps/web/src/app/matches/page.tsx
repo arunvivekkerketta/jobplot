@@ -3,6 +3,8 @@ import { listMatches, prisma } from "@jobpilot/db";
 import { requireUser } from "@/lib/session";
 import MatchPanel from "./MatchPanel";
 
+export const metadata = { title: "Matches" };
+
 export const dynamic = "force-dynamic";
 
 export default async function MatchesPage() {
@@ -47,9 +49,9 @@ export default async function MatchesPage() {
         <table className="card w-full text-sm" data-testid="matches-table">
           <thead>
             <tr className="text-left text-neutral-500">
-              <th className="pb-2">Score</th>
-              <th className="pb-2">Role</th>
-              <th className="pb-2">Why</th>
+              <th scope="col" className="pb-2">Score</th>
+              <th scope="col" className="pb-2">Role</th>
+              <th scope="col" className="pb-2">Why</th>
             </tr>
           </thead>
           <tbody>
@@ -61,18 +63,29 @@ export default async function MatchesPage() {
                 location?: number;
                 freshness?: number;
               };
+              // The strength is also a word, so the verdict never depends on
+              // distinguishing green from grey (A5).
+              const strength =
+                match.score >= 85 ? "Strong" : match.score >= 70 ? "Good" : "Weak";
               return (
                 <tr
                   key={match.id}
                   data-testid="match-row"
                   data-score={match.score}
+                  data-strength={strength.toLowerCase()}
                   className="border-t border-neutral-200 align-top"
                 >
                   <td className="py-3 pr-4">
                     <span className={eligible ? "font-semibold text-green-700" : "font-semibold text-neutral-500"}>
                       {match.score}
                     </span>
-                    <span className="ml-1 text-xs text-neutral-500">
+                    <span
+                      className="ml-1 text-xs font-medium text-neutral-700"
+                      data-testid="match-strength"
+                    >
+                      {strength}
+                    </span>
+                    <span className="ml-1 text-xs text-neutral-600">
                       {eligible ? "eligible" : "below threshold"}
                     </span>
                     <div className="mt-1 text-xs text-neutral-500">

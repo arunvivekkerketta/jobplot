@@ -116,7 +116,7 @@ export default function AnswersPanel({ initial }: { initial: AnswerEntry[] }) {
           </p>
         )}
         {saved && (
-          <p className="text-sm text-green-700" data-testid="answers-saved">
+          <p className="text-sm text-green-700" role="status" aria-live="polite" data-testid="answers-saved">
             Saved “{saved}”.
           </p>
         )}

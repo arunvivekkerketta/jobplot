@@ -2,6 +2,8 @@ import { prisma } from "@jobpilot/db";
 import { requireUser } from "@/lib/session";
 import SettingsForm from "./SettingsForm";
 
+export const metadata = { title: "Settings" };
+
 export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {

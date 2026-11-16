@@ -1,7 +1,10 @@
 import Link from "next/link";
+import { exactTime, relativeTime } from "@/lib/time";
 import { prisma } from "@jobpilot/db";
 import { requireUser } from "@/lib/session";
 import RenderPanel from "./RenderPanel";
+
+export const metadata = { title: "Documents" };
 
 export const dynamic = "force-dynamic";
 
@@ -42,11 +45,11 @@ export default async function DocumentsPage() {
           <table className="mt-3 w-full text-sm" data-testid="documents-table">
             <thead>
               <tr className="text-left text-neutral-500">
-                <th className="pb-2 font-medium">File</th>
-                <th className="pb-2 font-medium">Format</th>
-                <th className="pb-2 font-medium">ATS</th>
-                <th className="pb-2 font-medium">Created</th>
-                <th className="pb-2 font-medium" />
+                <th scope="col" className="pb-2 font-medium">File</th>
+                <th scope="col" className="pb-2 font-medium">Format</th>
+                <th scope="col" className="pb-2 font-medium">ATS</th>
+                <th scope="col" className="pb-2 font-medium">Created</th>
+                <th scope="col" className="pb-2 font-medium"><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>
@@ -68,7 +71,9 @@ export default async function DocumentsPage() {
                       </span>
                     </td>
                     <td className="py-2 text-neutral-600">
-                      {doc.createdAt.toISOString().slice(0, 16).replace("T", " ")}
+                      <span title={exactTime(doc.createdAt)}>
+                        {relativeTime(doc.createdAt)}
+                      </span>
                     </td>
                     <td className="py-2 text-right">
                       <a className="text-blue-700 hover:underline" href={`/api/documents/${doc.id}`}>

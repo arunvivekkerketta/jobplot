@@ -92,7 +92,7 @@ export default function RenderPanel({ hasProfile }: { hasProfile: boolean }) {
 
       {result && (
         <div className="space-y-3" data-testid="render-result">
-          <p className="text-sm font-medium text-green-700" data-testid="claims-validated">
+          <p className="text-sm font-medium text-green-700" role="status" aria-live="polite" data-testid="claims-validated">
             All {result.validation.checkedClaims} claims validated against the profile.
           </p>
           <p className="text-sm" data-testid="ats-score">
