@@ -2110,3 +2110,52 @@ pnpm e2e       → 37 passed (4.2m)
 Honest limit: the run-loop improvement is reasoned from the code and measured on the delivery call
 itself, not end to end — the e2e suite has no scenario with two paused applications and a slow
 webhook, so the wall-clock difference inside a real batch was not observed.
+
+## Gate 4.2 — the "Approve and send" button, clicked in a browser
+
+Gate 4.2's Approve-and-send path was only ever exercised through the API (`POST
+/api/applications/:id/approve`, via `tests/e2e/trust.ts`). The button itself — the confirm
+dialog, the fetch, the refresh, the row turning green — had no browser coverage.
+
+`apps/web/tests/e2e/phase4-approve.spec.ts` covers it against the mock ATS:
+
+1. signs in, imports the fixture profile, sets `mode: COPILOT`, `allowSubmit: true`,
+   `killSwitch: false`, `dailyCap: 10`, `matchThreshold: 50` (all restored from the values
+   read at the start, in a `finally`, because the suite shares one seeded user);
+2. creates a posting whose URL is the mock ATS Greenhouse form, scores it, tailors a version,
+   approves it, renders a PDF document and queues the application — asserting `201` and
+   `status: "QUEUED"`;
+3. makes the row *paused* through the route a run reports to,
+   `POST /api/applications/:id/result` with `status: "PAUSED_NEEDS_HUMAN"` and a `PAUSE`
+   action, so the case exercises the button rather than spending a browser run producing the
+   pause;
+4. opens `/applications`, finds the row by its title, and asserts `data-status` is
+   `PAUSED_NEEDS_HUMAN`, the row says `COPILOT`, and the reason block is visible (the click is
+   informed consent);
+5. registers a `dialog` handler that **accepts** the confirm, asserts the message was
+   "Approve and send this application?", clicks `data-testid="approve-send"`;
+6. asserts the same row — re-read after `router.refresh()` — has `data-status="SUBMITTED"`;
+7. asserts the mock ATS logged exactly one new `POST /submit/greenhouse` containing
+   `first_name=Priya`, so the status came from a real browser submission; and
+8. asserts `/audit` shows `application.approve` (I8).
+
+```
+$ pnpm --filter @jobpilot/web exec playwright test tests/e2e/phase4-approve.spec.ts --reporter=line
+  1 passed (1.1m)
+APPROVE=0
+```
+
+Full suite after adding the case (the specs share one database, so the new file's settings
+changes are restored on the way out):
+
+```
+LINT=0
+TYPECHECK=0
+TEST=0   → 251 passed, 1 skipped (the gate 2.4 integration test, which needs DATABASE_URL)
+pnpm e2e → 38 passed (4.1m)
+```
+
+What this does not prove: the run behind the button is the same code path `trust.ts` already
+covered, and this case does not re-drive the answer-required pause (it seeds the paused status
+instead), so a regression that makes the *automated* pause unreachable would still only be
+caught by gates 4.8/4.10.
