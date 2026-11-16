@@ -2042,3 +2042,30 @@ plain `pnpm test` cannot write into a developer's own data:
 ```
 
 `pnpm lint` → exit 0 (no warnings); `pnpm typecheck` → exit 0.
+
+## Review pass — Stage 3, with fresh eyes
+
+No gate changed. What was already clean, and what was not:
+
+| Area | Verdict |
+| --- | --- |
+| Page titles | Already minimal: one `export const metadata = { title: "…" }` per page and a single `template: "%s · JobPilot"` in the layout. Nothing to collapse — 14 pages, 14 one-line exports. |
+| Table headers | 26 `<th>` and 26 `scope="col"`; the empty Actions header carries an `sr-only` label. No unscoped header, no duplicated header markup. |
+| `NavLinks` | **Simplified.** The map computed `active` and then called `linkClass(href)`, which recomputed the same comparison. One computation now feeds both the class and `aria-current`. |
+| `SettingsForm` | **Simplified twice.** `fieldErrors` rewrote zod's own message with a regex (`/^Too small:.*/` → "must be at least the minimum"), which threw away the bound. The bounds now carry their messages in the API schema (`min(1, "must be 1 to 25")`), so the form just prints `Label: message`. |
+| `SettingsForm` fetch | **Bug fixed.** `setBusy(false)` ran after `await fetch(...)` with no `catch`, so a network failure rejected unhandled and left the button on "Saving…" for ever. The request now runs in `try`/`catch`/`finally`. |
+| Applications action log | **Consistent now.** The page pre-formatted the time and the panel printed a bare string; the page passes the ISO value and the panel renders `<span title={exactTime(at)}>{relativeTime(at)}</span>`, the pattern the audit, jobs and documents tables already use. |
+| `error.tsx` | Rendered an empty `<p>` when there was no `digest`; now conditional. |
+| Kept on purpose | The blank-input messages still read "enter a number from 1 to 25" — that describes an empty box, not an out-of-range value, and the a11y spec asserts it. |
+
+### Evidence
+
+```
+pnpm typecheck → exit 0
+pnpm lint      → exit 0
+pnpm test      → 249 passed, 1 skipped (the gate 2.4 integration test, which needs the e2e database)
+pnpm e2e       → 37 passed (4.1m)
+```
+
+The e2e run covers the parts this touched: the skip link and `aria-current` (phase9), the settings
+save and the empty-cap error (phase8/phase9), and the applications table (phase4).

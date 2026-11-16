@@ -18,8 +18,8 @@ export async function GET(req: Request) {
 const putSchema = z.object({
   // AUTOPILOT is what makes the scheduled worker tick pick this user up (8.2).
   mode: z.enum(["COPILOT", "AUTOPILOT"]).optional(),
-  dailyCap: z.number().int().min(1).max(25).optional(),
-  matchThreshold: z.number().int().min(0).max(100).optional(),
+  dailyCap: z.number().int().min(1, "must be 1 to 25").max(25, "must be 1 to 25").optional(),
+  matchThreshold: z.number().int().min(0, "must be 0 to 100").max(100, "must be 0 to 100").optional(),
   killSwitch: z.boolean().optional(),
   // Auto-Pilot cannot unlock a portal while this is off (I3).
   allowSubmit: z.boolean().optional(),

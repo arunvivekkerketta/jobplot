@@ -27,14 +27,6 @@ export default function NavLinks() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
 
-  const linkClass = (href: string): string => {
-    const active = pathname === href || pathname.startsWith(`${href}/`);
-    return [
-      "block py-2 hover:text-blue-700",
-      active ? "font-semibold text-blue-700" : "text-neutral-800",
-    ].join(" ");
-  };
-
   return (
     <nav aria-label="Main" className="relative">
       <button
@@ -57,7 +49,9 @@ export default function NavLinks() {
             <li key={link.href}>
               <Link
                 href={link.href}
-                className={linkClass(link.href)}
+                className={`block py-2 hover:text-blue-700 ${
+                  active ? "font-semibold text-blue-700" : "text-neutral-800"
+                }`}
                 {...(active ? { "aria-current": "page" as const } : {})}
               >
                 {link.label}

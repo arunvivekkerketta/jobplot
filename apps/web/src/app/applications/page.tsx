@@ -1,6 +1,5 @@
 import { prisma } from "@jobpilot/db";
 import { requireUser } from "@/lib/session";
-import { relativeTime } from "@/lib/time";
 import ApplicationsPanel from "./ApplicationsPanel";
 
 export const dynamic = "force-dynamic";
@@ -92,7 +91,7 @@ export default async function ApplicationsPage({
           job: application.job,
           actions: application.events.map((event) => ({
             type: event.type,
-            at: relativeTime(event.at),
+            at: event.at.toISOString(),
             detail:
               typeof (event.payload as { detail?: unknown }).detail === "string"
                 ? (event.payload as { detail: string }).detail

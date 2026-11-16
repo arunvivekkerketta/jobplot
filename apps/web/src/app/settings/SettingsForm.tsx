@@ -24,13 +24,12 @@ const FIELD_LABELS: Record<string, string> = {
   allowSubmit: "allowSubmit",
 };
 
-/** A zod issue becomes "Daily cap: must be 1 to 25" instead of a bare code. */
+/** A zod issue becomes "Daily cap: must be 1 to 25"; the message comes from the schema. */
 function fieldErrors(issues: Issue[]): Record<string, string> {
   const errors: Record<string, string> = {};
   for (const issue of issues) {
     const field = String(issue.path[0] ?? "form");
-    const label = FIELD_LABELS[field] ?? field;
-    errors[field] = `${label}: ${issue.message.replace(/^Too small:.*/, "must be at least the minimum")}`;
+    errors[field] = `${FIELD_LABELS[field] ?? field}: ${issue.message}`;
   }
   return errors;
 }
@@ -65,30 +64,36 @@ export default function SettingsForm({ initial }: { initial: SettingsData }) {
 
     setErrors({});
     setBusy(true);
-    const res = await fetch("/api/settings", {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        mode,
-        allowSubmit,
-        dailyCap: Number(dailyCap),
-        matchThreshold: Number(matchThreshold),
-        killSwitch,
-      }),
-    });
-    setBusy(false);
-    if (res.ok) {
-      setSaved(true);
-      router.refresh();
-      return;
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          mode,
+          allowSubmit,
+          dailyCap: Number(dailyCap),
+          matchThreshold: Number(matchThreshold),
+          killSwitch,
+        }),
+      });
+      if (res.ok) {
+        setSaved(true);
+        router.refresh();
+        return;
+      }
+      const body = (await res.json()) as { error?: string; issues?: Issue[] };
+      if (body.issues && body.issues.length > 0) {
+        setErrors(fieldErrors(body.issues));
+        setError("Please correct the highlighted fields.");
+        return;
+      }
+      setError(body.error ?? "Save failed");
+    } catch (err) {
+      // A failed request must not leave the button stuck on "Saving…".
+      setError(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setBusy(false);
     }
-    const body = (await res.json()) as { error?: string; issues?: Issue[] };
-    if (body.issues && body.issues.length > 0) {
-      setErrors(fieldErrors(body.issues));
-      setError("Please correct the highlighted fields.");
-      return;
-    }
-    setError(body.error ?? "Save failed");
   }
 
   return (

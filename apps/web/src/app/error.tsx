@@ -16,7 +16,7 @@ export default function GlobalError({
         The page could not be rendered. Nothing was submitted anywhere; you can try
         again or go back to your profile.
       </p>
-      <p className="text-xs text-neutral-600">{error.digest ?? ""}</p>
+      {error.digest && <p className="text-xs text-neutral-600">{error.digest}</p>}
       <div className="flex flex-wrap gap-3">
         <button type="button" className="btn-primary" onClick={() => reset()}>
           Try again

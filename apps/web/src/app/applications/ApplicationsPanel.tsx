@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { exactTime, relativeTime } from "@/lib/time";
 import ApproveButton from "./ApproveButton";
 
 export interface ApplicationAction {
@@ -131,7 +132,8 @@ export default function ApplicationsPanel({
                       <ul className="mt-1 space-y-1 text-neutral-700">
                         {application.actions.map((action, index) => (
                           <li key={`${application.id}-${index}`}>
-                            <strong>{action.type}</strong> {action.at}
+                            <strong>{action.type}</strong>{" "}
+                            <span title={exactTime(action.at)}>{relativeTime(action.at)}</span>
                             {action.detail ? ` — ${action.detail}` : ""}
                           </li>
                         ))}
