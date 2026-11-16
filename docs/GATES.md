@@ -2361,3 +2361,62 @@ pnpm e2e       → 39 passed (4.5m)
   service, not a constraint inside the write.
 - `ApplicationEvent`, `AuditLog` and the browser executor are unchanged: they are reached only
   through an application id that the caller has already been proved to own.
+
+## Phase 21 — the route guard gets unit tests
+
+`apps/web/src/lib/guard.ts` is the single entry point for every route, and until now only the
+Playwright suite exercised it, so a route that passed the wrong method through would have been
+caught by e2e luck rather than by a test that names the rule. The web app had no unit test
+runner at all: `vitest` (already in the workspace at 3.2.x) is now a dev dependency of
+`@jobpilot/web`, with `test: vitest run --passWithNoTests` so `turbo run test` picks it up.
+
+| Gate | Sub-Task Name | Observable Outcome | Expected Proof | Status |
+| --- | --- | --- | --- | --- |
+| 21a | No session | every request, read or write, is `401` before any other rule is consulted | `refuses a read with no session`, `refuses a mutation with no session before it looks at the origin` | [MET] |
+| 21b | Foreign Origin | a mutation carrying another site's `Origin` is `403` even with a valid JSON body | `refuses a foreign Origin even with a JSON body` | [MET] |
+| 21c | Cross-site `Sec-Fetch-Site` | a mutation with no `Origin` that the browser labels `cross-site` is `403` | `refuses a request the browser labels cross-site when Origin is absent` | [MET] |
+| 21d | Unusable origin/host pairs | an unparseable `Origin`, and a matching `Origin` with no `Host`, are both `403` | `refuses an origin it cannot parse`, `refuses a same-origin origin when the request carries no Host` | [MET] |
+| 21e | Body without a JSON content type | a mutation with a body and `text/plain` (or no content type) is `415` | `refuses a body that is not JSON`, `refuses a body that declares no content type` | [MET] |
+| 21f | Body-less request | a `DELETE` with no body, a `POST` declaring `content-length: 0`, and a request with no content length at all pass the body rule | `accepts a body-less DELETE…`, `accepts a POST that explicitly declares a zero-length body`, `treats a missing content-length as no body` | [MET] |
+| 21g | The happy paths still pass | a same-origin JSON mutation and a header-less read both return `{ userId }`; a read is not held to the write-only origin rule | `accepts the same-origin host that matches Origin`, `lets a signed-in read through with no headers at all`, `does not require a same-origin origin for a read` | [MET] |
+
+### Evidence
+
+```
+$ pnpm --filter @jobpilot/web exec vitest run
+ ✓ test/guard.test.ts (14 tests) 9ms
+ Test Files  1 passed (1)
+      Tests  14 passed (14)
+
+$ pnpm lint      → exit 0
+$ pnpm typecheck → exit 0
+$ pnpm test
+ @jobpilot/web:test:       Tests  14 passed (14)
+ @jobpilot/core 50  render 25  sources 34  llm 45  apply 65  autopilot 19 (+1 skipped)  db 24
+ Tasks: 8 successful, 8 total
+```
+
+The walkthrough against the expected proof: the guard returns a `Response` on every refusal, so
+each case asserts the status *and* the body the route would have sent, and the success cases
+assert the returned `{ userId }` rather than merely "not a Response".
+
+### The tests were proved to bite
+
+A green suite is not evidence that a test guards anything, so each rule was disabled in turn and
+the suite re-run, then the guard restored to its committed content (`git status` clean):
+
+```
+origin rule off      → 4 failed | 10 passed   (the four origin cases)
+content-type off     → 2 failed | 12 passed   (the two content-type cases)
+session check off    → 2 failed | 12 passed   (the two no-session cases)
+```
+
+### Deviations and limits
+
+- Node's `Request` does not materialise `content-length` for a string body, so the helper sets it
+  explicitly. A real HTTP connection always carries it; without this the body rule could not be
+  reached from a unit test at all.
+- `@/auth` is mocked: these tests are about the guard's decision order, not about NextAuth. The
+  sign-in path itself is covered by the e2e suite.
+- The guard is exercised through a `Request`, not through a route handler, so a route that forgets
+  to call the guard is still only caught by the e2e suite and by review.
