@@ -4,6 +4,13 @@ import type { AutopilotStatus } from "@jobpilot/autopilot";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 
+type RunRecord = {
+  id: string;
+  status: string;
+  result: ActionResult | null;
+  error: string | null;
+};
+
 type ActionResult = {
   error?: string;
   queued?: number;
@@ -56,6 +63,64 @@ export default function AutopilotPanel({ initial }: { initial: AutopilotStatus }
       if (controller) inFlight.current = null;
     }
   }
+
+  /** Waits for the worker to finish the queued run, one second at a time. */
+  async function waitForRun(id: string): Promise<RunRecord> {
+    const deadline = Date.now() + 5 * 60_000;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      const res = await fetch(`/api/autopilot/runs/${id}`, { cache: "no-store" });
+      const run = (await res.json()) as RunRecord;
+      if (!res.ok) return { ...run, id, status: "FAILED", result: null };
+      if (run.status === "DONE" || run.status === "FAILED") return run;
+    }
+    return {
+      id,
+      status: "FAILED",
+      result: null,
+      error: "The worker did not finish within five minutes.",
+    };
+  }
+
+  /**
+   * 4.6: Run asks the server to queue the batch, then follows the run row. The
+   * request returns immediately, so a long batch no longer holds the page open.
+   */
+  async function runNow(): Promise<void> {
+    const confirmed = window.confirm(
+      "Run Auto-Pilot now?\n\n" +
+        `JobPilot may submit up to ${initial.dailyCap} ` +
+        "applications today on the portals you unlocked, without asking again.",
+    );
+    if (!confirmed) return;
+    setRunning(true);
+    setError(null);
+    setResult(null);
+    try {
+      const res = await fetch("/api/autopilot", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "run", limit: 3 }),
+      });
+      const queued = (await res.json()) as { runId?: string; error?: string };
+      if (!res.ok || !queued.runId) {
+        setError(queued.error ?? `Request failed (${res.status})`);
+        return;
+      }
+      const run = await waitForRun(queued.runId);
+      if (run.status === "FAILED") {
+        setError(run.error ?? "The run failed.");
+      } else if (run.result) {
+        setResult(run.result);
+      }
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Request failed");
+    } finally {
+      setRunning(false);
+    }
+  }
+
 
   /**
    * The kill switch is written first and the pending run is abandoned, so Stop
@@ -259,16 +324,7 @@ export default function AutopilotPanel({ initial }: { initial: AutopilotStatus }
             className="btn-primary"
             disabled={running}
             aria-busy={running}
-            onClick={() =>
-              post(
-                { action: "run", limit: 3 },
-                {
-                  confirmText:
-                    `Run Auto-Pilot now?\n\nJobPilot may submit up to ${initial.dailyCap} ` +
-                    `applications today on the portals you unlocked, without asking again.`,
-                },
-              )
-            }
+            onClick={() => void runNow()}
             data-testid="run-autopilot"
           >
             {running ? "Running…" : "Run Auto-Pilot"}

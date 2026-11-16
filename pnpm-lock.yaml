@@ -176,6 +176,9 @@ importers:
       '@jobpilot/db':
         specifier: workspace:*
         version: link:../db
+      pg-boss:
+        specifier: ^10.1.5
+        version: 10.4.2
       playwright:
         specifier: 1.63.0
         version: 1.63.0

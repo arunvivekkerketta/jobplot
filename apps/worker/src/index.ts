@@ -1,9 +1,11 @@
+import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import PgBoss from "pg-boss";
 import { assertProductionConfig } from "@jobpilot/core";
-import { saveJobs, writeAudit } from "@jobpilot/db";
+import { failStaleAutopilotRuns, saveJobs, writeAudit } from "@jobpilot/db";
 import { runScheduledTick } from "@jobpilot/autopilot";
+import { AUTOPILOT_RUN_QUEUE, makeAutopilotRunHandler } from "@jobpilot/autopilot/queue";
 import {
   JOB_BOARDS_ENV,
   fetchSourceJobs,
@@ -35,6 +37,11 @@ const AUTOPILOT_QUEUE = "autopilot-tick";
  * is comfortably inside the per-host interval (30s) and the daily cap.
  */
 const AUTOPILOT_CRON = process.env.AUTOPILOT_CRON ?? "*/15 * * * *";
+/**
+ * A run older than this was queued but never finished, so no worker can still be
+ * working on it: the row is failed so the page cannot wait for ever (4.6).
+ */
+const STALE_RUN_MS = 30 * 60_000;
 /** Boards change slowly; six-hourly is plenty and stays polite to public APIs. */
 const FETCH_SCHEDULE = "0 */6 * * *";
 
@@ -117,8 +124,31 @@ async function main(): Promise<void> {
   await boss.schedule(AUTOPILOT_QUEUE, AUTOPILOT_CRON, {}, { singletonKey: "autopilot-tick" });
   console.log(`[worker] ${AUTOPILOT_QUEUE} scheduled (${AUTOPILOT_CRON})`);
 
+  // 4.6: the on-demand Run the page queues. Same service the scheduler drives, so
+  // the two paths cannot diverge.
+  await boss.createQueue(AUTOPILOT_RUN_QUEUE);
+  await boss.work(AUTOPILOT_RUN_QUEUE, makeAutopilotRunHandler());
+  console.log(`[worker] queue ${AUTOPILOT_RUN_QUEUE} consuming on demand`);
+
+  const stale = await failStaleAutopilotRuns(new Date(Date.now() - STALE_RUN_MS));
+  if (stale > 0) console.log(`[worker] failed ${stale} stale run(s) older than 30 minutes`);
+
+  // A queue consumer has no port, so the container healthcheck (and the e2e
+  // suite's readiness wait) needs one small endpoint that only answers once the
+  // consumers above are registered.
+  const healthPort = Number(process.env.WORKER_HEALTH_PORT ?? 3101);
+  const health = createServer((req, res) => {
+    const ready = req.url === "/healthz";
+    res.writeHead(ready ? 200 : 404, { "content-type": "text/plain" });
+    res.end(ready ? "ok" : "not found");
+  });
+  health.listen(healthPort, "127.0.0.1", () => {
+    console.log(`[worker] health on http://127.0.0.1:${healthPort}/healthz`);
+  });
+
   const shutdown = async (): Promise<void> => {
     console.log("[worker] shutting down");
+    health.close();
     await boss.stop();
     process.exit(0);
   };

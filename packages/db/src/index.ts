@@ -961,3 +961,86 @@ export async function listSchedulingSettings(): Promise<
     orderBy: { userId: "asc" },
   });
 }
+
+/** 4.6: the row a queued run is tracked by, created before the job is sent. */
+export async function createAutopilotRun(input: {
+  userId: string;
+  limit?: number;
+  jobIds?: string[];
+}): Promise<{ id: string; status: string }> {
+  return prisma.autopilotRun.create({
+    data: {
+      userId: input.userId,
+      ...(input.limit !== undefined ? { limit: input.limit } : {}),
+      ...(input.jobIds !== undefined ? { jobIds: input.jobIds } : {}),
+    },
+    select: { id: true, status: true },
+  });
+}
+
+/**
+ * Marks a run RUNNING. Conditional on the current status, so a duplicate delivery
+ * of the same job cannot run the batch twice.
+ */
+export async function startAutopilotRun(id: string): Promise<boolean> {
+  const { count } = await prisma.autopilotRun.updateMany({
+    where: { id, status: "QUEUED" },
+    data: { status: "RUNNING", startedAt: new Date() },
+  });
+  return count === 1;
+}
+
+export async function finishAutopilotRun(input: {
+  id: string;
+  result: Record<string, unknown>;
+}): Promise<void> {
+  await prisma.autopilotRun.update({
+    where: { id: input.id },
+    data: {
+      status: "DONE",
+      finishedAt: new Date(),
+      result: input.result as Prisma.InputJsonValue,
+    },
+  });
+}
+
+export async function failAutopilotRun(input: { id: string; error: string }): Promise<void> {
+  await prisma.autopilotRun.update({
+    where: { id: input.id },
+    data: { status: "FAILED", finishedAt: new Date(), error: input.error.slice(0, 1000) },
+  });
+}
+
+/** Owner-scoped read: a run id from another account is simply not found. */
+export async function getAutopilotRun(input: {
+  id: string;
+  userId: string;
+}): Promise<{
+  id: string;
+  status: string;
+  requestedAt: Date;
+  finishedAt: Date | null;
+  result: unknown;
+  error: string | null;
+} | null> {
+  return prisma.autopilotRun.findFirst({
+    where: { id: input.id, userId: input.userId },
+    select: {
+      id: true,
+      status: true,
+      requestedAt: true,
+      finishedAt: true,
+      result: true,
+      error: true,
+    },
+  });
+}
+
+/** A run that a worker never picked up must not stay QUEUED for ever. */
+export async function failStaleAutopilotRuns(before: Date): Promise<number> {
+  const { count } = await prisma.autopilotRun.updateMany({
+    where: { status: { in: ["QUEUED", "RUNNING"] }, requestedAt: { lt: before } },
+    data: { status: "FAILED", finishedAt: new Date(), error: "No worker picked the run up." },
+  });
+  return count;
+}

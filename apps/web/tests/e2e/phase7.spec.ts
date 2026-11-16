@@ -2,6 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
 import { approveCoPilotApplications } from "./trust";
+import { queueAutopilotRun } from "./run";
 
 const MOCK = process.env.MOCK_ATS_URL ?? "http://localhost:4600";
 const stamp = Date.now();
@@ -184,13 +185,7 @@ test("gate 7.1-7.5: Auto-Pilot submits unattended behind portals, caps and audit
   expect(manualPortal?.unlocked).toBe(true);
 
   // Gate 7.2: only a posting with an approved resume can be queued.
-  const beforeApproval = await page.request.post("/api/autopilot", {
-    data: { action: "run", jobIds: [jobA], limit: 1 },
-  });
-  const beforeBody = (await beforeApproval.json()) as {
-    queued: number;
-    skipped: Array<{ reason: string }>;
-  };
+  const beforeBody = await queueAutopilotRun(page, { jobIds: [jobA], limit: 1 });
   expect(beforeBody.queued).toBe(0);
   expect(beforeBody.skipped.map((entry) => entry.reason)).toContain("NO_APPROVED_RESUME");
 
@@ -203,17 +198,7 @@ test("gate 7.1-7.5: Auto-Pilot submits unattended behind portals, caps and audit
   await page.waitForTimeout(31_000);
 
   // Gates 7.3/7.4: one unattended submission, with no click anywhere.
-  const run = await page.request.post("/api/autopilot", {
-    data: { action: "run", jobIds: [jobA], limit: 1 },
-  });
-  expect(run.status()).toBe(200);
-  const runBody = (await run.json()) as {
-    queued: number;
-    submitted: number;
-    paused: number;
-    stopReason: string | null;
-    skipped: Array<{ reason: string }>;
-  };
+  const runBody = await queueAutopilotRun(page, { jobIds: [jobA], limit: 1 });
   expect(runBody.queued, JSON.stringify(runBody)).toBe(1);
   expect(runBody.submitted).toBe(1);
   expect(runBody.paused).toBe(0);
@@ -253,14 +238,7 @@ test("gate 7.1-7.5: Auto-Pilot submits unattended behind portals, caps and audit
     data: { dailyCap: Math.max(1, Math.min(25, status.submissionsToday)) },
   });
   expect(capped.status()).toBe(200);
-  const blocked = await page.request.post("/api/autopilot", {
-    data: { action: "run", jobIds: [jobB], limit: 1 },
-  });
-  expect(blocked.status()).toBe(200);
-  const blockedBody = (await blocked.json()) as {
-    queued: number;
-    skipped: Array<{ reason: string }>;
-  };
+  const blockedBody = await queueAutopilotRun(page, { jobIds: [jobB], limit: 1 });
   expect(blockedBody.queued).toBe(0);
   expect(blockedBody.skipped.map((entry) => entry.reason)).toContain("DAILY_CAP");
   expect(await submissions(page)).toHaveLength(1);
@@ -273,14 +251,7 @@ test("gate 7.1-7.5: Auto-Pilot submits unattended behind portals, caps and audit
   };
   expect(settingsAfterStop.killSwitch).toBe(true);
 
-  const afterStop = await page.request.post("/api/autopilot", {
-    data: { action: "run", jobIds: [jobB], limit: 1 },
-  });
-  expect(afterStop.status()).toBe(200);
-  const afterStopBody = (await afterStop.json()) as {
-    queued: number;
-    skipped: Array<{ reason: string }>;
-  };
+  const afterStopBody = await queueAutopilotRun(page, { jobIds: [jobB], limit: 1 });
   expect(afterStopBody.queued).toBe(0);
   expect(afterStopBody.skipped.map((entry) => entry.reason)).toContain("KILL_SWITCH");
   expect(await submissions(page)).toHaveLength(1);

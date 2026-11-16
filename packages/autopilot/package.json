@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./queue": "./src/queue.ts",
     ".": "./src/index.ts",
     "./*": "./src/*"
   },
@@ -15,6 +16,7 @@
     "@jobpilot/apply": "workspace:*",
     "@jobpilot/core": "workspace:*",
     "@jobpilot/db": "workspace:*",
+    "pg-boss": "^10.1.5",
     "playwright": "1.63.0"
   },
   "devDependencies": {

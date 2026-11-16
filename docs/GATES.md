@@ -1755,7 +1755,7 @@ plain anchor to `#main`.
 | 4.5 | Tell the user when a human is needed | `formatHumanNeeded` in core; `notifyHumanNeeded` posts codes-only text to an https webhook only, 5 s timeout, every attempt audited as `autopilot.notify`; every non-SUBMITTED outcome is queued in the Auto-Pilot outcome handler and the queue is delivered after the batch, so a slow webhook cannot delay the next posting | `packages/autopilot/test/notify.test.ts` (4 cases: delivered, http refused, not configured, network failure) | [MET] |
 | 4.2 | Earned Auto-Pilot trust ladder | not started | — | [PENDING] |
 | 4.4 | Cover letter, cold email, offer letters | done — see Phase 18 (letters, watermarks, claim re-check) and the 4.4f/4.4g section below (no-model drafting, workspace in a browser) | `core/test/letters.test.ts`, `llm/test/letters.test.ts`, `render/test/letter.test.ts`, phase10 e2e | [MET] |
-| 4.6 | Background "Run" via a queue | not started, needs a decision (see below) | — | [PENDING] |
+| 4.6 | Background "Run" via a queue | done — see the Phase 19 section at the end: the click queues an `AutopilotRun`, the worker executes it, the page polls the row, and the e2e suite starts a real worker | `autopilot/test/queue.test.ts`, phase7 e2e (202 → DONE) | [MET] |
 
 ### Evidence
 
@@ -2241,3 +2241,69 @@ number. It now saves `paragraphs.join("
 
 ")`: the body, re-checked, unmarked. The marks stay on the
 draft the user reviews, which is where I6 puts them.
+
+## Phase 19 — Stage 4, task 4.6: Run on the pg-boss queue, with a real worker in the suite
+
+The user chose option 2 and approved the dependency edge: `pg-boss` (already in the lockfile as
+`apps/worker`'s dependency, so nothing new was downloaded) is now also a dependency of
+`@jobpilot/autopilot`, because the queue name, the payload guard and the handler must live where
+both the web producer and the worker consumer can import them.
+
+| Gate | Sub-task | Observable outcome | Expected proof | Status |
+| --- | --- | --- | --- | --- |
+| 4.6a | The click queues, the request returns | `POST /api/autopilot {action:"run"}` writes an `AutopilotRun` row and answers `202 {runId, status:"QUEUED"}`; no browser opens in the request | phase7 helper asserts `202`; route reads | [MET] |
+| 4.6b | The worker executes a run exactly once | pg-boss consumer on `autopilot-run`; `startAutopilotRun` is a conditional `updateMany … WHERE status = 'QUEUED'`, so a redelivered job is skipped | `autopilot/test/queue.test.ts` (DONE, SKIPPED-on-redelivery, FAILED-recorded cases) | [MET] |
+| 4.6c | The outcome is stored and shown | result or error on the row; `GET /api/autopilot/runs/:id` is owner-scoped (`findFirst { id, userId }`); the panel polls it every second | phase7 e2e: every run assertion now reads the finished row; 39 e2e passed | [MET] |
+| 4.6d | The e2e suite runs a real worker | Playwright starts `@jobpilot/worker` on the e2e database with `/healthz` readiness, cron pushed out of the run window, one database shared with the app | phase7 alone: `4 passed (2.2m)`; full e2e: `39 passed (4.5m)` | [MET] |
+| 4.6e | No silent in-request fallback | a refused enqueue marks the row FAILED, audits `autopilot.run.enqueue.failed` and returns `503` | `enqueueAutopilotRun` unit cases (rejects on a null job id; sends once) — the 503 branch itself is not exercised end to end, see deviations | [MET] |
+| 4.6f | No run stays QUEUED for ever | the worker fails rows older than 30 minutes at startup (`failStaleAutopilotRuns`) | code + typecheck; no stale row is created in the suite | [MET] |
+
+### Evidence
+
+```
+$ pnpm --filter @jobpilot/web exec playwright test tests/e2e/phase7.spec.ts --reporter=line
+  4 passed (2.2m)
+PHASE7=0
+
+$ pnpm --filter @jobpilot/autopilot exec vitest run test/queue.test.ts --reporter=verbose
+  ✓ runs the batch and records the report
+  ✓ does not run a batch twice when the job is redelivered
+  ✓ records a failure instead of throwing, so the queue does not retry a spent batch
+  ✓ refuses a payload the API would never send
+  ✓ throws when pg-boss does not return a job id
+  ✓ sends the validated payload to the run queue once
+  Tests  6 passed (6)
+
+pnpm lint      → exit 0
+pnpm typecheck → exit 0
+pnpm test      → 260 passed, 1 skipped (autopilot 19 + 1 skipped, core 50, render 25, apply 65, llm 45, sources 34, db 22)
+pnpm e2e       → 39 passed (4.5m)
+```
+
+Walkthrough of 4.6d, which is the point of the option: the suite is unchanged in what it asserts —
+phase7 still clicks Run, waits for a submission and checks the mock ATS log — but the click now
+returns `202` and the submission happens in a different process. `tests/e2e/run.ts` posts the run,
+then polls `GET /api/autopilot/runs/:id` until the row says `DONE` and returns the stored report, so
+every existing assertion (`queued 1`, `submitted 1`, `DAILY_CAP`, `KILL_SWITCH`, `NO_APPROVED_RESUME`)
+is still made against real observed behaviour. Nothing was stubbed: the worker is a separate process on
+the e2e database, started by `playwright.config.ts`, and its readiness is the worker's own `/healthz`.
+
+### Deviations and limits
+
+- The queue payload is validated by a hand-written `parseRunPayload` rather than zod: adding a second
+  schema library to `@jobpilot/autopilot` for four fields was not worth a dependency the user had not
+  approved. The route still validates with zod at the HTTP boundary.
+- `queue.ts` is exported as its own subpath (`@jobpilot/autopilot/queue`), not from the package index.
+  Re-exporting it made every existing `@jobpilot/db` mock in the unit tests need the three new db
+  functions, including the deliberately-trimmed gate 2.4 mock. The subpath keeps the queue out of
+  consumers that do not queue.
+- The scheduled tick endpoint (`{action:"tick"}`) still runs in-request. It is the scheduler's
+  service, not the button, and changing it would be a second mechanism for the same work.
+- The `503` branch is proved by unit tests on the enqueue call and by reading the route; the suite
+  never breaks its own queue, because doing so needs a second app process on a bad connection. This
+  is the one part of 4.6 that is not end-to-end.
+- The stale-run sweep runs at worker start only; there is no periodic sweep while the process stays
+  up. A run queued just before a worker dies is cleared on the next start, not after 30 minutes.
+- `AutopilotRun.result` stores the whole `RunAutopilotResult`, which already appears in the
+  `autopilot.run` audit row; the duplication is deliberate (the row is the page's data source, the
+  audit is the record).

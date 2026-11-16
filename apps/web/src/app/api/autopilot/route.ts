@@ -1,10 +1,15 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { prisma, writeAudit } from "@jobpilot/db";
+import {
+  createAutopilotRun,
+  failAutopilotRun,
+  prisma,
+  writeAudit,
+} from "@jobpilot/db";
+import { enqueueAutopilotRun } from "@jobpilot/autopilot/queue";
 import {
   BrowserUnavailableError,
   loadAutopilotStatus,
-  runAutopilotNow,
   runScheduledTick,
   updatePortal,
 } from "@jobpilot/autopilot";
@@ -95,23 +100,41 @@ export async function POST(req: Request) {
     }
   }
 
+  // 4.6: the click queues the run and returns at once. The worker owns the batch
+  // from here — a five-minute browser run no longer has to fit in one request.
+  const run = await createAutopilotRun({
+    userId,
+    ...(parsed.data.limit !== undefined ? { limit: parsed.data.limit } : {}),
+    ...(parsed.data.jobIds !== undefined ? { jobIds: parsed.data.jobIds } : {}),
+  });
+
   try {
-    const result = await runAutopilotNow(userId, {
+    await enqueueAutopilotRun({
+      runId: run.id,
+      userId,
       ...(parsed.data.limit !== undefined ? { limit: parsed.data.limit } : {}),
       ...(parsed.data.jobIds !== undefined ? { jobIds: parsed.data.jobIds } : {}),
     });
-    return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
-    if (error instanceof BrowserUnavailableError) {
-      return NextResponse.json({ error: error.message }, { status: 503 });
-    }
+    // No silent in-request fallback: without a working queue the answer is a
+    // clear 503, a failed run row and an audit entry.
+    const message = error instanceof Error ? error.message : "queue unavailable";
+    await failAutopilotRun({ id: run.id, error: message });
     await writeAudit({
       actor: "SYSTEM",
-      action: "autopilot.failed",
-      entityType: "Settings",
-      entityId: userId,
-      payload: { message: error instanceof Error ? error.message : "unknown error" },
+      action: "autopilot.run.enqueue.failed",
+      entityType: "AutopilotRun",
+      entityId: run.id,
+      payload: { message },
     });
-    return NextResponse.json({ error: "Auto-Pilot run failed" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Auto-Pilot could not be queued. Is the worker running?", runId: run.id },
+      { status: 503 },
+    );
   }
+
+  return NextResponse.json(
+    { runId: run.id, status: "QUEUED" },
+    { status: 202, headers: { "Cache-Control": "no-store" } },
+  );
 }

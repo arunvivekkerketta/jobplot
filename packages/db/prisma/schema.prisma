@@ -16,6 +16,7 @@ model User {
   settings      Settings?
   answers       AnswerBankEntry[]
   documents     Document[]
+  autopilotRuns AutopilotRun[]
 }
 
 model Profile {
@@ -212,4 +213,23 @@ model AuditLog {
   entityType String
   entityId   String?
   payload    Json
+}
+
+/// 4.6: one row per requested Auto-Pilot run. The click queues the work and
+/// returns this id; the worker owns the state from QUEUED to DONE or FAILED, and
+/// the report is kept here so the page can show what happened after the fact.
+model AutopilotRun {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id])
+  status      String    @default("QUEUED")
+  limit       Int?
+  jobIds      Json?
+  requestedAt DateTime  @default(now())
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  result      Json?
+  error       String?
+
+  @@index([userId, requestedAt])
 }
