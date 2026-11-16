@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { LETTER_KINDS, letterWatermark, type JsonResumeProfile, type LetterKind } from "@jobpilot/core";
-import { AnthropicClient, draftLetterWithClient, LetterClaimError } from "@jobpilot/llm";
+import { AnthropicClient, draftLetter, LetterClaimError } from "@jobpilot/llm";
 import { renderLetter } from "@jobpilot/render";
 import { prisma, writeAudit } from "@jobpilot/db";
 import { requireUserRequest } from "@/lib/guard";
@@ -62,20 +62,18 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unknown job" }, { status: 404 });
   }
 
-  if (!process.env.ANTHROPIC_API_KEY) {
-    return NextResponse.json(
-      { error: "Set ANTHROPIC_API_KEY to draft letters." },
-      { status: 503 },
-    );
-  }
-  const client = new AnthropicClient({
-    audit: async (entry) => {
-      await writeAudit(entry);
-    },
-  });
+  // Without a key the draft is built from the profile alone (never invented prose),
+  // so the workspace still works and the claim re-check still decides.
+  const client = process.env.ANTHROPIC_API_KEY
+    ? new AnthropicClient({
+        audit: async (entry) => {
+          await writeAudit(entry);
+        },
+      })
+    : null;
 
   try {
-    const { draft, check } = await draftLetterWithClient({
+    const { draft, check, source } = await draftLetter({
       client,
       kind: parsed.data.kind as LetterKind,
       profile: profile.jsonResume as unknown as JsonResumeProfile,
@@ -96,6 +94,7 @@ export async function POST(req: Request) {
       entityId: job.id,
       payload: {
         kind: draft.kind,
+        source,
         claims: check.checkedClaims,
         watermark: rendered.watermark,
       },
@@ -108,6 +107,7 @@ export async function POST(req: Request) {
         paragraphs: draft.paragraphs,
         claims: draft.claims,
         checkedClaims: check.checkedClaims,
+        source,
         watermark: letterWatermark(draft.kind),
         text: rendered.text,
         html: rendered.html,

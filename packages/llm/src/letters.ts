@@ -108,5 +108,123 @@ export async function draftLetterWithClient(input: {
   return { draft, check };
 }
 
+/** A fact string as a sentence, so a bullet without a full stop still reads. */
+function asSentence(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+}
+
+/**
+ * A draft with no model at all: every specific fact is copied from the profile
+ * and the surrounding prose is generic, so the claim re-check passes by
+ * construction. Used when no LLM key is configured, which keeps letters usable
+ * (and testable) offline instead of answering 503 — the same shape as the
+ * deterministic match explanation.
+ */
+export function draftLetterDeterministic(input: {
+  kind: LetterKind;
+  profile: JsonResumeProfile;
+  job: LetterJob;
+}): LetterDraft {
+  const { profile, job, kind } = input;
+  const claims: string[] = [];
+  const evidence: string[] = [];
+
+  const role = profile.work[0];
+  if (role) {
+    evidence.push(`Most recently I worked as ${role.position} at ${role.company}.`);
+    claims.push(`${role.position} at ${role.company}`);
+    const highlight = role.highlights[0]?.text;
+    if (highlight) {
+      evidence.push(asSentence(highlight));
+      claims.push(highlight);
+    }
+  } else if (profile.basics.summary) {
+    evidence.push(asSentence(profile.basics.summary));
+    claims.push(profile.basics.summary);
+  }
+
+  const skills = profile.skills
+    .flatMap((group) => [group.name, ...group.keywords.map((keyword) => keyword.keyword)])
+    .filter(Boolean);
+  if (skills.length > 0) {
+    evidence.push(`The tools I use most are ${skills.slice(0, 5).join(", ")}.`);
+  }
+
+  switch (kind) {
+    case "COVER_LETTER":
+      return {
+        kind,
+        subject: `${job.title} — cover letter`,
+        paragraphs: [
+          "I am writing to apply for this role.",
+          ...evidence,
+          "I would welcome the chance to talk about how I can help your team.",
+        ],
+        claims,
+      };
+    case "COLD_EMAIL":
+      return {
+        kind,
+        subject: `Hello from ${profile.basics.name}`,
+        paragraphs: [
+          "I am reaching out about engineering roles on your team.",
+          ...evidence.slice(0, 2),
+          "Would you be open to a short conversation about where I could help?",
+        ],
+        claims,
+      };
+    case "OFFER_REPLY":
+      return {
+        kind,
+        subject: "Re: your offer",
+        paragraphs: [
+          "Thank you for sending the written offer; I am glad to have it in writing.",
+          "I am interested in moving forward with you.",
+          ...evidence.slice(0, 1),
+          "Before I reply in full, could you confirm the details the document leaves open, such as the start date and the terms I would be joining on?",
+        ],
+        claims: claims.slice(0, 1),
+      };
+  }
+}
+
+export interface LetterDraftResult {
+  draft: LetterDraft;
+  check: LetterCheck;
+  /** Where the prose came from; the claim re-check runs either way. */
+  source: "model" | "deterministic";
+}
+
+/**
+ * The one drafting entry point: the model when a client is supplied, the
+ * fact-only fallback otherwise. Both paths are proved against the profile, so a
+ * caller cannot get an unproved letter by not configuring a key (I1).
+ */
+export async function draftLetter(input: {
+  client?: LLMClient | null;
+  kind: LetterKind;
+  profile: JsonResumeProfile;
+  job: LetterJob;
+  notes?: string;
+}): Promise<LetterDraftResult> {
+  if (input.client) {
+    const { draft, check } = await draftLetterWithClient({
+      client: input.client,
+      kind: input.kind,
+      profile: input.profile,
+      job: input.job,
+      ...(input.notes ? { notes: input.notes } : {}),
+    });
+    return { draft, check, source: "model" };
+  }
+
+  const draft = draftLetterDeterministic(input);
+  const check = recheckLetterClaims(input.profile, draft);
+  if (!check.ok) throw new LetterClaimError(check);
+  return { draft, check, source: "deterministic" };
+}
+
 /** Re-exported so callers can catch one error type without importing core. */
 export { LetterClaimError } from "@jobpilot/core";

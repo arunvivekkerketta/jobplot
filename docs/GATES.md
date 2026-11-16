@@ -1754,7 +1754,7 @@ plain anchor to `#main`.
 | 4.3 | Skill-gap report plus project ideas | `extractGap` counts each keyword once per posting and asks the Fact Index whether the profile can prove it; `suggestProjects` returns 4–6 step ideas from a fixed table with a generic fallback. `POST /api/gaps` and `/skills` share one `loadGap` computation (`apps/web/src/lib/gap.ts`), so the saved report and the rendered page cannot disagree; `/skills` renders have/missing/ideas | `packages/core/test/gap.test.ts` (5 cases) + `/skills` e2e | [MET] |
 | 4.5 | Tell the user when a human is needed | `formatHumanNeeded` in core; `notifyHumanNeeded` posts codes-only text to an https webhook only, 5 s timeout, every attempt audited as `autopilot.notify`; every non-SUBMITTED outcome is queued in the Auto-Pilot outcome handler and the queue is delivered after the batch, so a slow webhook cannot delay the next posting | `packages/autopilot/test/notify.test.ts` (4 cases: delivered, http refused, not configured, network failure) | [MET] |
 | 4.2 | Earned Auto-Pilot trust ladder | not started | — | [PENDING] |
-| 4.4 | Cover letter, cold email, offer letters | not started | — | [PENDING] |
+| 4.4 | Cover letter, cold email, offer letters | done — see Phase 18 (letters, watermarks, claim re-check) and the 4.4f/4.4g section below (no-model drafting, workspace in a browser) | `core/test/letters.test.ts`, `llm/test/letters.test.ts`, `render/test/letter.test.ts`, phase10 e2e | [MET] |
 | 4.6 | Background "Run" via a queue | not started, needs a decision (see below) | — | [PENDING] |
 
 ### Evidence
@@ -1860,10 +1860,10 @@ on the stored text, so a hand-edited letter is caught at the moment it becomes f
 - There is no email or messaging integration, so "sent" is defined as the moment a letter enters
   the Answer Bank (the only path by which letter text reaches an employer's form). No mail is
   dispatched by this task and no third-party dependency was added.
-- `POST /api/letters` needs `ANTHROPIC_API_KEY` (503 with a clear message otherwise). The drafting
-  route is therefore not exercised end to end in this environment; the prompt, the schema, the
-  claim rejection and the rendering are covered by unit tests with `FakeLLMClient`, and the
-  Answer-Bank gate is covered end to end.
+- `POST /api/letters` answered 503 without `ANTHROPIC_API_KEY` in the first pass, so the route was
+  only unit-tested. It now falls back to a deterministic, profile-only draft (see 4.4f below), so
+  the route is exercised end to end; the *model* path is still covered only by unit tests with
+  `FakeLLMClient`, because this environment has no key.
 - The e2e specs for phase7 and phase8 previously put a timestamp inside their cover-letter
   answer; that is exactly the invented-number case the gate now rejects, so the fixtures use a
   fact-only sentence instead of weakening the check.
@@ -2159,3 +2159,56 @@ What this does not prove: the run behind the button is the same code path `trust
 covered, and this case does not re-drive the answer-required pause (it seeds the paused status
 instead), so a regression that makes the *automated* pause unreachable would still only be
 caught by gates 4.8/4.10.
+
+## Stage 4, task 4.4 — completed: drafting without a key, and the workspace in a browser
+
+The first 4.4 pass left two holes: the drafting route refused to run at all without
+`ANTHROPIC_API_KEY` (so nothing about it was proved end to end), and the `/letters` workspace was
+only asserted to render a form. Both are closed here.
+
+| Gate | Sub-task | Observable outcome | Expected proof | Status |
+| --- | --- | --- | --- | --- |
+| 4.4f | Drafting works with no model, and is still fact-only | `draftLetter` uses the model when a client is supplied and a deterministic, profile-only draft otherwise; both paths run `recheckLetterClaims` and throw `LetterClaimError` on failure; the route returns `source: "model" \| "deterministic"` and audits it | `packages/llm/test/letters.test.ts` gate 4.4f (3 cases: all three kinds pass the check with claims > 0, marks are DRAFT/DRAFT/SAMPLE, no number from the posting reaches the body) | [MET] |
+| 4.4g | The workspace drafts and saves in a browser | `/letters` drafts each kind, shows the watermark badge and the source, and "Save to Answer Bank" stores the **body** (not the marked artifact) after the route re-checks it; a hand-written letter with an invented number is still refused | `apps/web/tests/e2e/phase10-letters.spec.ts` (second case) | [MET] |
+
+### Evidence
+
+```
+$ pnpm --filter @jobpilot/web exec playwright test tests/e2e/phase10-letters.spec.ts --reporter=line
+  ✓ gate 4.4: a letter's claims are re-checked before it can be used
+  ✓ gate 4.4d/4.4g: every kind drafts in the workspace, marked, and saves behind the claim re-check
+  2 passed (44.6s)
+PHASE10=0
+```
+
+```
+pnpm lint      → exit 0
+pnpm typecheck → exit 0
+pnpm test      → 254 passed, 1 skipped (llm 45, core 50, render 25, apply 65, sources 34, db 22, autopilot 13 + 1 skipped)
+pnpm e2e       → 39 passed (4.3m)
+```
+
+Walkthrough of 4.4f: `draftLetterDeterministic` copies its specifics — latest role, its first bullet,
+the skill names — straight out of the profile and wraps them in generic prose that names neither the
+posting's title nor its company. That is deliberate: the *subject* may quote the posting, the *body*
+may not, because the body is what a form receives, and a posting title such as "Staff Engineer 2031"
+would otherwise put `2031` into a letter the profile cannot support. The unit case asserts exactly
+that (`"Staff Engineer 2031"`/`"Lumen 42"` never reach a paragraph) and that
+`recheckLetterClaims` returns `ok: true` with `checkedClaims > 0` for all three kinds.
+
+Walkthrough of 4.4g: the e2e drives the real page — select "Offer reply (sample)", select the posting,
+"Draft letter" — and asserts `letter-watermark` reads `SAMPLE`, the draft text starts with
+`[SAMPLE]` and contains the closing `[SAMPLE] This is a sample` line, `letter-source` says
+"drafted from your profile", and saving yields `letter-saved`. It then posts a hand-written
+`offer_reply` containing `987654` and asserts `422` with `UNKNOWN_NUMBER`, so the re-check is still
+the gate at the moment text becomes form input.
+
+### Deviation from the first pass, stated plainly
+
+The workspace used to save `draft.text` — the marked artifact, including the `[DRAFT]`/`[SAMPLE]`
+lines and the subject — into the Answer Bank. That would have typed "`[SAMPLE]`" into an employer's
+form and would have failed the save check whenever the subject quoted a posting title containing a
+number. It now saves `paragraphs.join("
+
+")`: the body, re-checked, unmarked. The marks stay on the
+draft the user reviews, which is where I6 puts them.

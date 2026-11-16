@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { LETTER_SYSTEM, buildLetterPrompt, draftLetterWithClient } from "../src/letters.js";
+import {
+  LETTER_SYSTEM,
+  buildLetterPrompt,
+  draftLetter,
+  draftLetterDeterministic,
+  draftLetterWithClient,
+} from "../src/letters.js";
+import { formatLetter, letterWatermark, type LetterKind } from "@jobpilot/core";
 import { FakeLLMClient } from "../src/fakeClient.js";
 import { UNTRUSTED_PREAMBLE } from "../src/untrusted.js";
 import type { JsonResumeProfile } from "@jobpilot/core";
@@ -90,5 +97,55 @@ describe("gate 4.4: drafts are proved against the profile before they are return
     await expect(
       draftLetterWithClient({ client, kind: "OFFER_REPLY", profile, job }),
     ).rejects.toThrow(/claims the profile cannot support/);
+  });
+});
+
+describe("gate 4.4f: a draft without a model is still fact-only (I1)", () => {
+  const kinds: LetterKind[] = ["COVER_LETTER", "COLD_EMAIL", "OFFER_REPLY"];
+
+  it("drafts all three kinds from the profile and passes the claim re-check", async () => {
+    for (const kind of kinds) {
+      const { draft, check, source } = await draftLetter({ kind, profile, job });
+      expect(source).toBe("deterministic");
+      expect(check.ok).toBe(true);
+      expect(check.issues).toEqual([]);
+      expect(check.checkedClaims).toBeGreaterThan(0);
+      expect(draft.claims.length).toBeGreaterThan(0);
+
+      // Every claim is a string the profile actually contains.
+      const facts = JSON.stringify(profile).toLowerCase();
+      for (const claim of draft.claims) {
+        expect(facts).toContain(claim.toLowerCase().split(" at ")[0] ?? claim);
+      }
+
+      // No placeholders, and the mark is fixed by the kind (I6).
+      const text = formatLetter(draft);
+      expect(text).not.toMatch(/TODO|\[insert|\.\.\./i);
+      const mark = letterWatermark(kind);
+      expect(text.startsWith(`[${mark}]`)).toBe(true);
+      expect(text.trimEnd().endsWith("review every claim before sending.")).toBe(true);
+      expect(draft.paragraphs.every((paragraph) => paragraph.trim().length > 0)).toBe(true);
+    }
+  });
+
+  it("marks a cover letter and a cold email DRAFT and an offer reply SAMPLE", () => {
+    for (const kind of kinds) {
+      const draft = draftLetterDeterministic({ kind, profile, job });
+      expect(letterWatermark(kind)).toBe(kind === "OFFER_REPLY" ? "SAMPLE" : "DRAFT");
+      expect(formatLetter(draft)).toContain(letterWatermark(kind));
+    }
+  });
+
+  it("never copies a number from the posting into the body", async () => {
+    // The title carries numbers the profile has no record of; the subject may use
+    // it, the body may not, because the body is what a form receives.
+    const { draft, check } = await draftLetter({
+      kind: "COVER_LETTER",
+      profile,
+      job: { ...job, title: "Staff Engineer 2031", company: "Lumen 42" },
+    });
+    expect(check.ok).toBe(true);
+    expect(draft.paragraphs.join(" ")).not.toContain("2031");
+    expect(draft.paragraphs.join(" ")).not.toContain("42");
   });
 });

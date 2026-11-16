@@ -11,9 +11,12 @@ interface JobOption {
 interface Draft {
   kind: string;
   subject: string;
+  /** The body only: what a form field should receive, without the marks. */
+  paragraphs: string[];
   text: string;
   watermark: string;
   checkedClaims: number;
+  source: string;
 }
 
 const KINDS = [
@@ -76,7 +79,12 @@ export default function LettersPanel({ jobs }: { jobs: JobOption[] }) {
       const res = await fetch("/api/answers", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ key: answerKey, answer: draft.text }),
+        // The body, not the marked artifact: the SAMPLE/DRAFT marks belong on the
+        // draft the user reviews, never in text typed into an employer's form.
+        body: JSON.stringify({
+          key: answerKey,
+          answer: draft.paragraphs.join("\n\n"),
+        }),
       });
       const payload = (await res.json()) as {
         error?: string;
@@ -173,8 +181,9 @@ export default function LettersPanel({ jobs }: { jobs: JobOption[] }) {
         <section className="card space-y-3" data-testid="letter-draft">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="font-semibold">{draft.subject}</h2>
-            <span className="text-xs text-neutral-600">
-              {draft.checkedClaims} claim(s) checked against your profile
+            <span className="text-xs text-neutral-600" data-testid="letter-source">
+              {draft.checkedClaims} claim(s) checked against your profile ·{" "}
+              {draft.source === "model" ? "drafted by the model" : "drafted from your profile"}
             </span>
           </div>
           <pre className="whitespace-pre-wrap text-sm text-neutral-800">{draft.text}</pre>
