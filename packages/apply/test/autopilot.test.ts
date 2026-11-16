@@ -181,6 +181,9 @@ function fakePage(counter: { submits: number }): AutopilotPage {
     async bodyText() {
       return submitted ? "Application received. Thank you." : "Greenhouse fixture";
     },
+    async challengePresent() {
+      return false;
+    },
     async close() {
       closed.value = true;
     },
@@ -241,5 +244,82 @@ describe("gate 7.4: the loop submits without a click and re-checks the gate each
 
     expect(openPage).not.toHaveBeenCalled();
     expect(report.stopReason).toBe("SUBMIT_DISABLED");
+  });
+});
+describe("gate 1.1: the kill switch and the per-host interval act on the run in progress", () => {
+  it("stops before the next posting when the kill switch is flipped mid-run", async () => {
+    const counter = { submits: 0 };
+    let kill = false;
+
+    const report = await runAutopilot({
+      targets: [
+        { jobId: "a", portal: "greenhouse", url: "http://localhost:4600/greenhouse/sample" },
+        { jobId: "b", portal: "greenhouse", url: "http://localhost:4600/greenhouse/sample" },
+      ],
+      openPage: async () => fakePage(counter),
+      profile: { basics: { name: "Priya Sharma", email: "priya@example.com" } },
+      preflightFor: () => ({
+        settings: { ...settings, killSwitch: kill },
+        submissionsToday: 0,
+        now,
+      }),
+      onOutcome: async () => {
+        // The user reaches the Stop button while the first submission is ending.
+        kill = true;
+      },
+    });
+
+    expect(counter.submits).toBe(1);
+    expect(report.outcomes.map((outcome) => outcome.status)).toEqual(["SUBMITTED"]);
+    expect(report.stopReason).toBe("KILL_SWITCH");
+  });
+
+  it("waits out a short per-host interval instead of stopping the run", async () => {
+    const waits: number[] = [];
+    let attempts = 0;
+
+    const report = await runAutopilot({
+      targets: [
+        { jobId: "a", portal: "greenhouse", url: "http://localhost:4600/greenhouse/sample" },
+      ],
+      openPage: async () => fakePage({ submits: 0 }),
+      profile: { basics: { name: "Priya Sharma", email: "priya@example.com" } },
+      preflightFor: () => {
+        attempts += 1;
+        return attempts === 1
+          ? {
+              settings,
+              submissionsToday: 0,
+              now,
+              lastActionAt: new Date(now.getTime() - 29_000),
+            }
+          : { settings, submissionsToday: 0, now };
+      },
+      sleep: async (ms) => {
+        waits.push(ms);
+      },
+    });
+
+    expect(waits).toEqual([1_000]);
+    expect(attempts).toBe(2);
+    expect(report.outcomes[0]?.status).toBe("SUBMITTED");
+  });
+
+  it("blocks instead of clicking submit when beforeSubmit refuses", async () => {
+    const report = await runAutopilot({
+      targets: [
+        { jobId: "a", portal: "greenhouse", url: "http://localhost:4600/greenhouse/sample" },
+      ],
+      openPage: async () => fakePage({ submits: 0 }),
+      profile: { basics: { name: "Priya Sharma", email: "priya@example.com" } },
+      preflightFor: () => ({ settings, submissionsToday: 0, now }),
+      beforeSubmit: async () => false,
+    });
+
+    const outcome = report.outcomes[0];
+    expect(outcome?.status).toBe("BLOCKED");
+    expect(outcome?.reason).toBe("KILL_SWITCH");
+    expect(outcome?.actions.some((action) => action.kind === "SUBMIT")).toBe(false);
+    expect(outcome?.actions.some((action) => action.kind === "BLOCK")).toBe(true);
   });
 });

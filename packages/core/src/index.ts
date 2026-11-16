@@ -1,3 +1,4 @@
+export * from "./config.js";
 export * from "./crypto.js";
 export * from "./profile/aliases.js";
 export * from "./profile/schema.js";

@@ -1541,3 +1541,92 @@ Developer database after both runs        74 applications, unchanged
 
 Still unverified for the same reason as before: no Docker daemon here, so
 `docker build`/`docker compose up` and the GHCR push itself have never executed.
+
+## Phase 13 — Stage 1 safety fixes
+
+### GATES LEDGER
+
+| Gate | Sub-Task Name | Observable Outcome | Expected Proof | Status |
+| --- | --- | --- | --- | --- |
+| 1.1 | Kill switch acts during a run | A flip mid-batch stops the next posting; a short per-host wait is honoured; submit is re-checked | 3 new `@jobpilot/apply` tests | [MET] |
+| 1.2 | Stop always works | Stop stays enabled during a run, abandons the request and raises the banner | phase7 e2e (3 passed) | [MET] |
+| 1.3 | Untrusted wrapper cannot be escaped | Forged `</untrusted>`, nested comments and zero-width smuggling are neutralised | 6 new `@jobpilot/llm` tests | [MET] |
+| 1.4 | One posting, one run | A second claim fails; a stale claim is recoverable; release requeues | 3 new `@jobpilot/db` tests | [MET] |
+| 1.5 | Challenge detection | A widget with no readable text pauses as CAPTCHA and nothing is filled or clicked | 1 new `@jobpilot/apply` test | [MET] |
+| 1.6 | Sensitive answers encrypted | The column holds `v1.…` ciphertext, the API returns plaintext, audits carry no value | 3 new `@jobpilot/db` tests | [MET] |
+| 1.7 | Production refuses known secrets | Each placeholder is named; strong values pass; a short secret fails | 5 new `@jobpilot/core` tests | [MET] |
+| 1.7b | Compose demands the secrets | `docker compose config` fails without `.env`, naming `NEXTAUTH_SECRET` | the command itself | [PENDING] — no Docker daemon on this machine (`docker: command not found`), so the interpolation cannot be executed here |
+
+### Evidence
+
+`packages/apply/src/autopilot.ts` now re-reads the gate per posting and waits out a
+short interval instead of stopping:
+
+```ts
+let decision = evaluatePreflight(await options.preflightFor(target, index));
+if (!decision.allowed && decision.reason === "RATE_LIMIT" &&
+    decision.retryAfterMs !== undefined && decision.retryAfterMs <= 60_000) {
+  await sleep(decision.retryAfterMs);
+  decision = evaluatePreflight(await options.preflightFor(target, index));
+}
+if (!decision.allowed) return { outcomes, stopReason: decision.reason };
+```
+
+`packages/autopilot/src/index.ts` supplies a fresh read per posting and a final
+check before the submit click:
+
+```ts
+preflightFor: async (target) => {
+  const fresh = await settingsFor(userId);
+  const today = await submissionCounts({ since: startOfToday() });
+  ...
+},
+beforeSubmit: async () => !(await settingsFor(userId)).killSwitch,
+```
+
+`packages/db/src/index.ts` claims with one conditional UPDATE. The stale branch is
+required by the task's own stale-claim test, because a crashed run leaves the row
+`RUNNING`:
+
+```ts
+OR: [
+  { AND: [{ status: { in: CLAIMABLE_STATUSES } },
+          { OR: [{ claimedAt: null }, { claimedAt: { lt: staleBefore } }] }] },
+  { AND: [{ status: "RUNNING" }, { claimedAt: { lt: staleBefore } }] },
+],
+```
+
+Sensitive answers are encrypted on write and decrypted on read, and a value that
+cannot be decrypted yields `""` plus `answer.decrypt_failed id=…` (id only):
+
+```
+@jobpilot/db:test: stderr | gate 1.6 … > stores an empty string when the stored value cannot be decrypted
+@jobpilot/db:test: answer.decrypt_failed id=cmwjd2k45000ncv68hqhlt3kp
+```
+
+Run totals after Stage 1:
+
+```
+@jobpilot/apply:test:       Tests  56 passed
+@jobpilot/autopilot:test:   Tests  6 passed
+@jobpilot/core:test:        Tests  33 passed
+@jobpilot/db:test:          Tests  21 passed
+@jobpilot/llm:test:         Tests  35 passed
+@jobpilot/render:test:      Tests  22 passed
+@jobpilot/sources:test:     Tests  34 passed
+TOTAL=207
+
+LINT=0  TYPECHECK=0  TEST=0
+pnpm e2e → 29 passed (3.2m)
+pnpm --filter @jobpilot/web exec playwright test tests/e2e/phase7.spec.ts → 3 passed (1.2m)
+```
+
+Two implementation notes that differ from the brief:
+
+- The instrumentation hook has to be split. Next compiles `instrumentation.ts` for
+  the Edge runtime as well, and `@jobpilot/core` imports `node:crypto`, which broke
+  the dev build with `UnhandledSchemeError: Reading from "node:crypto"`. The guard
+  now lives in `instrumentation.node.ts` and is imported only when
+  `NEXT_RUNTIME === "nodejs"`.
+- `apps/worker` gained a workspace dependency on `@jobpilot/core` (it had none) so
+  the worker can call the same production guard.

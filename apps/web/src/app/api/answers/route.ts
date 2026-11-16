@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/auth";
+import { looksSensitive } from "@jobpilot/apply";
 import { deleteAnswer, listAnswers, upsertAnswer } from "@jobpilot/db";
 
 export const dynamic = "force-dynamic";
@@ -52,8 +53,10 @@ export async function POST(req: Request) {
   const entry = await upsertAnswer({
     userId,
     key: parsed.data.key,
-    answer: parsed.data.answer,
-    sensitive: parsed.data.sensitive ?? false,
+          answer: parsed.data.answer,
+    // A sensitive-looking key is always treated as sensitive, whatever the client
+    // sent, so a value cannot be stored in the clear by leaving a box unticked (I5/I7).
+    sensitive: parsed.data.sensitive === true || looksSensitive(parsed.data.key),
     ...(parsed.data.questionPattern !== undefined
       ? { questionPattern: parsed.data.questionPattern }
       : {}),

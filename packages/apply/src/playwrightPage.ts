@@ -61,6 +61,21 @@ function findButtons(pattern: string): number[] {
   return found;
 }
 
+/** Serialized into the page; challenge widgets are matched in the DOM, not by text. */
+function detectChallenge(): boolean {
+  const selectors = [
+    'iframe[src*="recaptcha"]',
+    'iframe[src*="hcaptcha"]',
+    'iframe[src*="challenges.cloudflare.com"]',
+    'iframe[title*="captcha" i]',
+    ".g-recaptcha",
+    ".h-captcha",
+    ".cf-turnstile",
+    "[data-sitekey]",
+  ];
+  return selectors.some((selector) => document.querySelector(selector) !== null);
+}
+
 const CONTROL_SELECTOR = "input, textarea, select";
 const BUTTON_SELECTOR = "button, input[type=submit]";
 
@@ -96,6 +111,9 @@ export function playwrightPage(page: PageLike): RunnerPage {
     },
     async bodyText() {
       return page.locator("body").innerText();
+    },
+    async challengePresent() {
+      return page.evaluate(detectChallenge);
     },
   };
 }

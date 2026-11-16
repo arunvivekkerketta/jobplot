@@ -120,6 +120,8 @@ model Application {
   screenshots     String[]
   submittedAt     DateTime?
   outcomeAt       DateTime?
+  /// Set while a run (button or cron) owns this row, so two runs never both apply (H5).
+  claimedAt       DateTime?
   notes           String?
   events          ApplicationEvent[]
 }

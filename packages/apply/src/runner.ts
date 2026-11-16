@@ -27,6 +27,8 @@ export interface RunnerPage {
   attach(control: RawControl, path: string): Promise<void>;
   clickButton(index: number): Promise<void>;
   bodyText(): Promise<string>;
+  /** True when a challenge widget is present, even if its text is an image (I4). */
+  challengePresent(): Promise<boolean>;
 }
 
 export type ActionKind =
@@ -63,6 +65,12 @@ export interface RunOptions {
   resumePath?: string;
   preflight?: PreflightInput;
   maxSteps?: number;
+  /**
+   * Re-read immediately before the submit click. Returning false stops the
+   * application where it stands (I4): a kill switch flipped mid-run must not be
+   * able to send the form that is already open.
+   */
+  beforeSubmit?: () => Promise<boolean>;
 }
 
 const CONFIRMATION_RE = /(application received|submitted successfully|thanks for applying)/i;
@@ -73,6 +81,9 @@ const CONFIRMATION_RE = /(application received|submitted successfully|thanks for
  * user to sign in again.
  */
 async function detectPause(page: RunnerPage): Promise<string | null> {
+  // A challenge is often an iframe or a widget with no readable text, so the DOM
+  // is checked before the text (I4).
+  if (await page.challengePresent()) return "CAPTCHA";
   const text = await page.bodyText();
   if (/(captcha|complete the challenge)/i.test(text)) return "CAPTCHA";
   if (/(session (has )?expired|sign in again)/i.test(text)) return "SESSION_EXPIRED";
@@ -183,6 +194,11 @@ export async function runApplication(options: RunOptions): Promise<RunResult> {
     if (submitIndex === undefined) {
       record({ kind: "PAUSE", detail: "NO_SUBMIT_CONTROL" });
       return { status: "PAUSED_NEEDS_HUMAN", reason: "NO_SUBMIT_CONTROL", actions, needsHuman };
+    }
+
+    if (options.beforeSubmit && !(await options.beforeSubmit())) {
+      record({ kind: "BLOCK", detail: "KILL_SWITCH: stopped before submit" });
+      return { status: "BLOCKED", reason: "KILL_SWITCH", actions, needsHuman };
     }
 
     await options.page.clickButton(submitIndex);

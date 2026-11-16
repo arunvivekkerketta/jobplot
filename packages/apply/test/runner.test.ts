@@ -60,6 +60,13 @@ class FakePage implements RunnerPage {
   async bodyText(): Promise<string> {
     return this.scenario?.text ?? "";
   }
+
+  /** Set by a test to fake a challenge widget with no readable text. */
+  challenge = false;
+
+  async challengePresent(): Promise<boolean> {
+    return this.challenge;
+  }
 }
 
 const profile: Pick<JsonResumeProfile, "basics"> = {
@@ -216,5 +223,29 @@ describe("gate 4.10: a multi-section form is never partially submitted", () => {
     expect(result.status).toBe("SUBMITTED");
     expect(page.filled.years).toBe("8");
     expect(page.clicked).toEqual([0]);
+  });
+});
+describe("gate 1.5: a challenge widget pauses even when its text is unreadable (I4)", () => {
+  it("detects the challenge in the DOM, fills nothing and clicks nothing", async () => {
+    const page = new FakePage({
+      "http://localhost:4600/edge/widget": {
+        controls: [control(0, "First name", "first_name")],
+        text: "Greenhouse fixture",
+        buttons: ["Submit application"],
+      },
+    });
+    page.challenge = true;
+
+    const result = await runApplication({
+      page,
+      url: "http://localhost:4600/edge/widget",
+      profile,
+    });
+
+    expect(result.status).toBe("PAUSED_NEEDS_HUMAN");
+    expect(result.reason).toBe("CAPTCHA");
+    expect(result.actions.map((action) => action.kind)).toEqual(["NAVIGATE", "PAUSE"]);
+    expect(page.filled).toEqual({});
+    expect(page.clicked).toEqual([]);
   });
 });

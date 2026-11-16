@@ -7,22 +7,28 @@
 #   docker compose --profile seed run --rm seed   # create the admin user + default Settings
 #
 # Values come from the environment or a local .env file next to this file. The
-# defaults are the throwaway development values used elsewhere in the repo; set
-# APP_ENCRYPTION_KEY, NEXTAUTH_SECRET and POSTGRES_PASSWORD for anything real.
+# four secrets have NO default: `docker compose up` refuses to start until they are
+# set, so a stack can never come up with a key that is in this repository's
+# history. Generate each one once and keep it:
+#
+#   APP_ENCRYPTION_KEY=$(openssl rand -base64 32)
+#   NEXTAUTH_SECRET=$(openssl rand -base64 32)
+#   POSTGRES_PASSWORD=$(openssl rand -base64 24)
+#   ADMIN_PASSWORD=<the password you will sign in with>
 
 name: jobpilot
 
-x-database-url: &database-url postgresql://jobpilot:${POSTGRES_PASSWORD:-jobpilot}@db:5432/jobpilot
+x-database-url: &database-url postgresql://jobpilot:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/jobpilot
 
 # Shared by both app images: they read the same configuration as `pnpm dev`.
 x-app-env: &app-env
   DATABASE_URL: *database-url
-  APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:-BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=}
-  NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-compose-secret-not-for-production}
-  AUTH_SECRET: ${NEXTAUTH_SECRET:-compose-secret-not-for-production}
+  APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:?Set APP_ENCRYPTION_KEY in .env}
+  NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?Set NEXTAUTH_SECRET in .env}
+  AUTH_SECRET: ${NEXTAUTH_SECRET:?Set NEXTAUTH_SECRET in .env}
   NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
   ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@jobpilot.local}
-  ADMIN_PASSWORD: ${ADMIN_PASSWORD:-jobpilot-admin}
+  ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
   # Optional integrations; empty values keep the deterministic/offline paths.
   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
   LLM_MODEL: ${LLM_MODEL:-}
@@ -41,10 +47,11 @@ services:
     container_name: jobpilot-db
     environment:
       POSTGRES_USER: jobpilot
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jobpilot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: jobpilot
     ports:
-      - "5432:5432"
+      # Loopback only: the database is for this machine, never the network.
+      - "127.0.0.1:5432:5432"
     volumes:
       - jobpilot-pgdata:/var/lib/postgresql/data
     healthcheck:

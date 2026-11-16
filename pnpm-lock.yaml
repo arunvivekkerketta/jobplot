@@ -123,6 +123,9 @@ importers:
       '@jobpilot/autopilot':
         specifier: workspace:*
         version: link:../../packages/autopilot
+      '@jobpilot/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@jobpilot/db':
         specifier: workspace:*
         version: link:../../packages/db

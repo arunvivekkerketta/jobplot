@@ -227,8 +227,15 @@ export interface RunAutopilotOptions {
   openPage: () => Promise<AutopilotPage>;
   profile: Pick<JsonResumeProfile, "basics">;
   answers?: readonly AnswerBankEntryLike[];
-  /** Built per target so a cap that fills mid-run stops the next one. */
-  preflightFor: (target: AutopilotTarget, index: number) => PreflightInput;
+  /**
+   * Built per target so a cap, or a kill switch flipped during the run, stops the
+   * next one. It may be async because the caller must re-read stored settings.
+   */
+  preflightFor: (target: AutopilotTarget, index: number) => PreflightInput | Promise<PreflightInput>;
+  /** Waits out a short per-host interval; tests pass a fake so no test sleeps. */
+  sleep?: (ms: number) => Promise<void>;
+  /** Re-checked inside the runner immediately before the submit click (I4). */
+  beforeSubmit?: (target: AutopilotTarget) => Promise<boolean>;
   onOutcome?: (outcome: AutopilotOutcome) => Promise<void>;
   maxApplications?: number;
 }
@@ -246,11 +253,24 @@ export interface AutopilotReport {
 export async function runAutopilot(options: RunAutopilotOptions): Promise<AutopilotReport> {
   const outcomes: AutopilotOutcome[] = [];
   const max = options.maxApplications ?? options.targets.length;
+  const sleep =
+    options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 
   for (const [index, target] of options.targets.entries()) {
     if (index >= max) break;
 
-    const decision = evaluatePreflight(options.preflightFor(target, index));
+    let decision = evaluatePreflight(await options.preflightFor(target, index));
+    // A wait this short is just spacing between postings on one host; anything
+    // longer means the run should stop rather than hold a browser open.
+    if (
+      !decision.allowed &&
+      decision.reason === "RATE_LIMIT" &&
+      decision.retryAfterMs !== undefined &&
+      decision.retryAfterMs <= 60_000
+    ) {
+      await sleep(decision.retryAfterMs);
+      decision = evaluatePreflight(await options.preflightFor(target, index));
+    }
     if (!decision.allowed) {
       return { outcomes, stopReason: decision.reason };
     }
@@ -263,6 +283,9 @@ export async function runAutopilot(options: RunAutopilotOptions): Promise<Autopi
         profile: options.profile,
         answers: options.answers ?? [],
         ...(target.resumePath ? { resumePath: target.resumePath } : {}),
+        ...(options.beforeSubmit
+          ? { beforeSubmit: () => options.beforeSubmit!(target) }
+          : {}),
       });
       const outcome: AutopilotOutcome = {
         jobId: target.jobId,

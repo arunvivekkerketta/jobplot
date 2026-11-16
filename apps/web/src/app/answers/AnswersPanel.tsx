@@ -16,6 +16,14 @@ export default function AnswersPanel({ initial }: { initial: AnswerEntry[] }) {
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Sensitive values are hidden until the user asks for that one row (I7).
+  const [revealed, setRevealed] = useState<string[]>([]);
+
+  function toggleReveal(id: string): void {
+    setRevealed((current) =>
+      current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id],
+    );
+  }
 
   async function save(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -145,7 +153,19 @@ export default function AnswersPanel({ initial }: { initial: AnswerEntry[] }) {
                     </button>
                   </span>
                 </div>
-                <p className="mt-1 text-neutral-700">{entry.answer}</p>
+                <p className="mt-1 text-neutral-700" data-testid="answer-text">
+                  {entry.sensitive && !revealed.includes(entry.id) ? "••••••" : entry.answer}
+                </p>
+                {entry.sensitive && (
+                  <button
+                    type="button"
+                    className="mt-1 text-xs text-blue-700 underline"
+                    onClick={() => toggleReveal(entry.id)}
+                    data-testid="toggle-answer-visibility"
+                  >
+                    {revealed.includes(entry.id) ? "Hide" : "Show"}
+                  </button>
+                )}
                 {entry.questionPattern && (
                   <p className="mt-1 text-xs text-neutral-500">
                     pattern: {entry.questionPattern}

@@ -14,12 +14,14 @@ import {
 } from "@jobpilot/apply";
 import type { JsonResumeProfile } from "@jobpilot/core";
 import {
+  claimApplication,
   createApplication,
   listAnswers,
   listSchedulingSettings,
   prisma,
   readDocumentBytes,
   recordApplicationResult,
+  releaseApplication,
   setPortalPolicy,
   submissionCounts,
   writeAudit,
@@ -116,7 +118,11 @@ async function loadCandidates(
   const applied = new Set(
     applications
       .filter(
-        (application) => application.status === "SUBMITTED" || application.status === "ERROR",
+        (application) =>
+          application.status === "SUBMITTED" ||
+          application.status === "ERROR" ||
+          // Another run already owns this row; it must not be selected again (H5).
+          application.status === "RUNNING",
       )
       .map((application) => application.jobId),
   );
@@ -319,19 +325,49 @@ export async function runAutopilotNow(
 
   const eligible = selection.eligible as StoredCandidate[];
   const applicationIds = new Map<string, string>();
+  const claimed: StoredCandidate[] = [];
+  const claimedIds: string[] = [];
   for (const candidate of eligible) {
     const application = await createApplication({
       jobId: candidate.jobId,
       portal: candidate.portal,
       mode: "AUTOPILOT",
     });
+    // Two runs can select the same posting (the button and the cron); only the one
+    // that wins the conditional update may drive the browser (H5).
+    if (!(await claimApplication(application.id))) continue;
+    claimed.push(candidate);
+    claimedIds.push(application.id);
     applicationIds.set(candidate.jobId, application.id);
   }
+
+  if (claimed.length === 0) {
+    await writeAudit({
+      actor: "SYSTEM",
+      action: "autopilot.skip",
+      entityType: "Settings",
+      entityId: userId,
+      payload: { queued: 0, skipped: selection.skipped.length, reason: "ALREADY_RUNNING" },
+    });
+    return {
+      queued: 0,
+      submitted: 0,
+      paused: 0,
+      outcomes: [],
+      skipped: selection.skipped,
+      stopReason: "ALREADY_RUNNING",
+    };
+  }
+
+  /** Gives every claim back so the next run can retry instead of being locked out. */
+  const releaseClaims = async (): Promise<void> => {
+    for (const id of claimedIds) await releaseApplication(id);
+  };
 
   const answers = await listAnswers(userId);
   const tempFiles: string[] = [];
   const resumePaths = new Map<string, string>();
-  for (const candidate of eligible) {
+  for (const candidate of claimed) {
     const pdfPath = candidate.pdfPath;
     if (!pdfPath) continue;
     const documentId = pdfPath.split("/").pop();
@@ -348,6 +384,8 @@ export async function runAutopilotNow(
   try {
     ({ chromium } = await import("playwright"));
   } catch (error) {
+    // Nothing was applied, so the claims must not lock these postings out.
+    await releaseClaims();
     await writeAudit({
       actor: "SYSTEM",
       action: "autopilot.unavailable",
@@ -360,10 +398,25 @@ export async function runAutopilotNow(
     );
   }
 
-  const browser = await chromium.launch();
+  let browser: Awaited<ReturnType<typeof chromium.launch>>;
+  try {
+    browser = await chromium.launch();
+  } catch (error) {
+    await releaseClaims();
+    await writeAudit({
+      actor: "SYSTEM",
+      action: "autopilot.unavailable",
+      entityType: "Settings",
+      entityId: userId,
+      payload: { message: error instanceof Error ? error.message : "browser launch failed" },
+    });
+    throw new BrowserUnavailableError(
+      "The browser could not be started, so Auto-Pilot cannot run.",
+    );
+  }
   try {
     const report = await runAutopilot({
-      targets: eligible.map((candidate) => ({
+      targets: claimed.map((candidate) => ({
         jobId: candidate.jobId,
         portal: candidate.portal,
         url: candidate.url,
@@ -384,16 +437,28 @@ export async function runAutopilotNow(
       profile: profile.jsonResume as unknown as JsonResumeProfile,
       answers,
       maxApplications: limit,
-      preflightFor: (_target, index) => ({
-        settings: {
-          killSwitch: settings.killSwitch,
-          allowSubmit: settings.allowSubmit,
-          dailyCap: settings.dailyCap,
-          mode: settings.mode,
-        },
-        submissionsToday: counts.total + index,
-        now: new Date(),
-      }),
+      // Re-read from the database before every posting: the kill switch and the
+      // caps must act on the run that is happening now, not on the snapshot taken
+      // when the batch started (I4).
+      preflightFor: async (target) => {
+        const fresh = await settingsFor(userId);
+        const today = await submissionCounts({ since: startOfToday() });
+        const last = today.lastByPortal[target.portal];
+        return {
+          settings: {
+            killSwitch: fresh.killSwitch,
+            allowSubmit: fresh.allowSubmit,
+            dailyCap: fresh.dailyCap,
+            mode: fresh.mode,
+          },
+          submissionsToday: today.total,
+          perPortalSubmissionsToday: today.byPortal[target.portal] ?? 0,
+          ...(last ? { lastActionAt: last } : {}),
+          now: new Date(),
+        };
+      },
+      // Last chance to stop: the form is filled but nothing has been sent.
+      beforeSubmit: async () => !(await settingsFor(userId)).killSwitch,
       onOutcome: async (outcome) => {
         const applicationId = applicationIds.get(outcome.jobId);
         if (!applicationId) return;

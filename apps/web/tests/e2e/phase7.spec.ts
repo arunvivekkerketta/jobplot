@@ -229,6 +229,8 @@ test("gate 7.1-7.5: Auto-Pilot submits unattended behind portals, caps and audit
 
 test("gate 7.7: the page shows portals, the queue and the last run", async ({ page }) => {
   await login(page);
+  // Unlock and Run now ask the user to confirm what Auto-Pilot may do (I3).
+  page.on("dialog", (dialog) => void dialog.accept());
 
   await page.request.put("/api/settings", { data: { killSwitch: false, allowSubmit: true } });
   await page.request.post("/api/autopilot", { data: { action: "unlock", portal: "manual" } });
@@ -258,11 +260,14 @@ test("gate 7.7: the page shows portals, the queue and the last run", async ({ pa
     { timeout: 20_000 },
   );
 
-  // The kill switch from the page stops the next run.
+  // Stop must work while a run is still in flight: it abandons the pending
+  // request and raises the kill switch, so the banner appears immediately.
+  await page.getByTestId("run-autopilot").click();
   await page.getByTestId("stop-autopilot").click();
-  await expect(page.getByTestId("autopilot-result")).toContainText(/Stopped/i, {
-    timeout: 20_000,
-  });
+  await expect(page.getByTestId("kill-switch-banner")).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByTestId("kill-switch-banner")).toContainText(
+    /Nothing will be submitted/,
+  );
   await expect(page.getByTestId("autopilot-state")).toContainText("on");
 
   // The audit page shows the newest rows, so the UI check looks for the actions

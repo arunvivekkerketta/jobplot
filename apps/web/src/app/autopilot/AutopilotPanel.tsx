@@ -2,7 +2,7 @@
 
 import type { AutopilotStatus } from "@jobpilot/autopilot";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 type ActionResult = {
   error?: string;
@@ -10,17 +10,27 @@ type ActionResult = {
   submitted?: number;
   paused?: number;
   stopReason?: string | null;
-  skipped?: Array<{ jobId: string; reason: string }>;
+  skipped?: Array<{ jobId: string; reason: string; message?: string }>;
 };
 
 export default function AutopilotPanel({ initial }: { initial: AutopilotStatus }) {
   const router = useRouter();
-  const [busy, setBusy] = useState(false);
+  // Two flags on purpose: the Stop button must stay usable for the whole run, so
+  // it cannot share the busy state that disables Run (H1).
+  const [running, setRunning] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ActionResult | null>(null);
+  const inFlight = useRef<AbortController | null>(null);
 
-  async function post(body: Record<string, unknown>) {
-    setBusy(true);
+  async function post(
+    body: Record<string, unknown>,
+    options: { confirmText?: string; signal?: AbortSignal } = {},
+  ): Promise<void> {
+    if (options.confirmText && !window.confirm(options.confirmText)) return;
+    const controller = options.signal ? null : new AbortController();
+    if (controller) inFlight.current = controller;
+    setRunning(true);
     setError(null);
     setResult(null);
     try {
@@ -28,6 +38,7 @@ export default function AutopilotPanel({ initial }: { initial: AutopilotStatus }
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
+        ...(controller ? { signal: controller.signal } : {}),
       });
       const payload = (await res.json()) as ActionResult;
       if (!res.ok) {
@@ -37,14 +48,86 @@ export default function AutopilotPanel({ initial }: { initial: AutopilotStatus }
       setResult(payload);
       router.refresh();
     } catch (err) {
+      // An abort means the Stop button took over; it reports the outcome itself.
+      if (err instanceof DOMException && err.name === "AbortError") return;
       setError(err instanceof Error ? err.message : "Request failed");
     } finally {
-      setBusy(false);
+      setRunning(false);
+      if (controller) inFlight.current = null;
+    }
+  }
+
+  /**
+   * The kill switch is written first and the pending run is abandoned, so Stop
+   * acts immediately instead of waiting for a browser batch to finish (H1).
+   */
+  async function stop(): Promise<void> {
+    setStopping(true);
+    inFlight.current?.abort();
+    setError(null);
+    try {
+      const res = await fetch("/api/autopilot", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "stop" }),
+      });
+      const payload = (await res.json()) as ActionResult;
+      if (!res.ok) {
+        setError(payload.error ?? `Stop failed (${res.status})`);
+        return;
+      }
+      setResult({ stopReason: "KILL_SWITCH" });
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Stop failed");
+    } finally {
+      setStopping(false);
+    }
+  }
+
+  async function turnKillSwitchOff(): Promise<void> {
+    setStopping(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ killSwitch: false }),
+      });
+      if (!res.ok) {
+        const payload = (await res.json()) as { error?: string };
+        setError(payload.error ?? `Request failed (${res.status})`);
+        return;
+      }
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Request failed");
+    } finally {
+      setStopping(false);
     }
   }
 
   return (
     <div className="space-y-6">
+      {initial.killSwitch && (
+        <div
+          className="card flex flex-wrap items-center justify-between gap-3 border-l-4 border-red-600 text-sm"
+          role="status"
+          data-testid="kill-switch-banner"
+        >
+          <strong className="text-red-700">Kill switch is ON. Nothing will be submitted.</strong>
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={stopping}
+            onClick={turnKillSwitchOff}
+            data-testid="kill-switch-off"
+          >
+            Turn off
+          </button>
+        </div>
+      )}
+
       <div className="card grid gap-2 text-sm sm:grid-cols-4" data-testid="autopilot-state">
         <p>
           Mode <strong>{initial.mode}</strong>
@@ -86,7 +169,7 @@ export default function AutopilotPanel({ initial }: { initial: AutopilotStatus }
                     <button
                       type="button"
                       className="underline"
-                      disabled={busy}
+                      disabled={running}
                       onClick={() => post({ action: "lock", portal: portal.portal })}
                       data-testid="portal-lock"
                     >
@@ -97,8 +180,18 @@ export default function AutopilotPanel({ initial }: { initial: AutopilotStatus }
                   <button
                     type="button"
                     className="btn-primary"
-                    disabled={busy}
-                    onClick={() => post({ action: "unlock", portal: portal.portal })}
+                    disabled={running}
+                    onClick={() =>
+                      post(
+                        { action: "unlock", portal: portal.portal },
+                        {
+                          confirmText:
+                            `Unlock ${portal.portal} for Auto-Pilot?\n\n` +
+                            `This lets JobPilot submit applications for you on ${portal.portal}, ` +
+                            `up to ${initial.dailyCap} per day, without asking again.`,
+                        },
+                      )
+                    }
                     data-testid="portal-unlock"
                   >
                     Unlock
@@ -131,7 +224,7 @@ export default function AutopilotPanel({ initial }: { initial: AutopilotStatus }
             <ul className="mt-1 space-y-1">
               {initial.skipped.map((entry) => (
                 <li key={`${entry.jobId}-${entry.reason}`}>
-                  {entry.title}: {entry.reason}
+                  {entry.title}: {entry.message || entry.reason}
                 </li>
               ))}
             </ul>
@@ -141,20 +234,30 @@ export default function AutopilotPanel({ initial }: { initial: AutopilotStatus }
           <button
             type="button"
             className="btn-primary"
-            disabled={busy}
-            onClick={() => post({ action: "run", limit: 3 })}
+            disabled={running}
+            aria-busy={running}
+            onClick={() =>
+              post(
+                { action: "run", limit: 3 },
+                {
+                  confirmText:
+                    `Run Auto-Pilot now?\n\nJobPilot may submit up to ${initial.dailyCap} ` +
+                    `applications today on the portals you unlocked, without asking again.`,
+                },
+              )
+            }
             data-testid="run-autopilot"
           >
-            {busy ? "Running…" : "Run Auto-Pilot"}
+            {running ? "Running…" : "Run Auto-Pilot"}
           </button>
           <button
             type="button"
-            className="underline text-sm text-red-700"
-            disabled={busy}
-            onClick={() => post({ action: "stop" })}
+            className="btn-danger"
+            disabled={stopping}
+            onClick={stop}
             data-testid="stop-autopilot"
           >
-            Stop (kill switch)
+            {stopping ? "Stopping…" : "Stop"}
           </button>
         </div>
         {error && (
@@ -163,7 +266,7 @@ export default function AutopilotPanel({ initial }: { initial: AutopilotStatus }
           </p>
         )}
         {result && (
-          <p className="text-sm text-green-800" data-testid="autopilot-result">
+          <p className="text-sm text-green-800" role="status" data-testid="autopilot-result">
             {result.queued === undefined
               ? `Stopped (${result.stopReason ?? "kill switch"}).`
               : `Queued ${result.queued}, submitted ${result.submitted}, paused ${

@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@jobpilot/autopilot": "workspace:*",
+    "@jobpilot/core": "workspace:*",
     "@jobpilot/db": "workspace:*",
     "@jobpilot/sources": "workspace:*",
     "pg-boss": "^10.1.5"

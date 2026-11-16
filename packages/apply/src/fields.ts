@@ -92,6 +92,15 @@ const SENSITIVE_LABEL_RE =
 const SUSPICIOUS_LABEL_RE =
   /(ignore\s+(all\s+|any\s+)?(your\s+|the\s+|previous\s+|above\s+)?instructions|disregard\s+(the\s+)?(above|previous|system)|system\s+prompt|you\s+are\s+now|jailbreak|override\s+(your|the)\s+(rules|instructions))/i;
 
+/**
+ * True when a key or label names a sensitive topic, so its value must be
+ * encrypted at rest (I5/I7). Deliberately broad: a false positive only costs an
+ * extra encryption, a false negative would store an answer in the clear.
+ */
+export function looksSensitive(text: string): boolean {
+  return SENSITIVE_LABEL_RE.test(text);
+}
+
 function normalizeToken(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]/g, "");
 }

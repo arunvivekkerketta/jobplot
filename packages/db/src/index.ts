@@ -1,6 +1,12 @@
 import { Prisma, PrismaClient } from "@prisma/client";
 import { redactDeep } from "@jobpilot/llm";
-import { buildFactIndex, type JsonResumeProfile } from "@jobpilot/core";
+import {
+  DecryptionError,
+  buildFactIndex,
+  decrypt,
+  encrypt,
+  type JsonResumeProfile,
+} from "@jobpilot/core";
 import { EMBEDDING_MODEL, hashEmbedding, vectorLiteral } from "@jobpilot/core";
 import {
   canonicalizeUrl,
@@ -308,6 +314,50 @@ export async function createApplication(input: {
   }, TX_OPTIONS);
 }
 
+const CLAIM_STALE_MS = 30 * 60_000;
+/** Statuses a run may pick up: anything waiting for another attempt. */
+const CLAIMABLE_STATUSES = ["QUEUED", "PAUSED_NEEDS_HUMAN", "BLOCKED"];
+
+/**
+ * Takes ownership of one application for one run (H5). A single conditional
+ * UPDATE decides the winner, so two processes racing on the same row cannot both
+ * be told they may open the browser.
+ */
+export async function claimApplication(
+  applicationId: string,
+  now = new Date(),
+): Promise<boolean> {
+  const staleBefore = new Date(now.getTime() - CLAIM_STALE_MS);
+  const claimed = await prisma.application.updateMany({
+    where: {
+      id: applicationId,
+      OR: [
+        // Waiting for another attempt, and nobody holds it (or the holder died
+        // long enough ago that its claim is stale).
+        {
+          AND: [
+            { status: { in: CLAIMABLE_STATUSES } },
+            { OR: [{ claimedAt: null }, { claimedAt: { lt: staleBefore } }] },
+          ],
+        },
+        // A crashed run leaves the row RUNNING; a stale one must be recoverable,
+        // otherwise the posting is locked out for ever (H5).
+        { AND: [{ status: "RUNNING" }, { claimedAt: { lt: staleBefore } }] },
+      ],
+    },
+    data: { status: "RUNNING", claimedAt: now },
+  });
+  return claimed.count === 1;
+}
+
+/** Gives a claim back without recording a result: the browser never opened. */
+export async function releaseApplication(applicationId: string): Promise<void> {
+  await prisma.application.updateMany({
+    where: { id: applicationId, status: "RUNNING" },
+    data: { status: "QUEUED", claimedAt: null },
+  });
+}
+
 export interface RecordResultInput {
   applicationId: string;
   status: string;
@@ -329,6 +379,8 @@ export async function recordApplicationResult(
       where: { id: input.applicationId },
       data: {
         status: input.status,
+        // The run that owned this row is finished with it, whatever the outcome.
+        claimedAt: null,
         ...(input.status === "SUBMITTED" ? { submittedAt: new Date() } : {}),
         ...(input.reason ? { notes: input.reason } : {}),
         ...(input.submissionText
@@ -682,7 +734,9 @@ export async function upsertAnswer(
     const entry = await tx.answerBankEntry.upsert({
       where: { userId_key: { userId: input.userId, key: input.key } },
       update: {
-        answer: input.answer,
+        // Sensitive answers are encrypted at rest (I7); the column only ever holds
+        // plaintext for non-sensitive entries.
+        answer: input.sensitive ? encrypt(input.answer) : input.answer,
         sensitive: input.sensitive,
         ...(input.questionPattern !== undefined
           ? { questionPattern: input.questionPattern }
@@ -692,7 +746,7 @@ export async function upsertAnswer(
         userId: input.userId,
         key: input.key,
         questionPattern: input.questionPattern ?? null,
-        answer: input.answer,
+        answer: input.sensitive ? encrypt(input.answer) : input.answer,
         sensitive: input.sensitive,
         source: "USER",
       },
@@ -713,10 +767,23 @@ export async function upsertAnswer(
 }
 
 export async function listAnswers(userId: string) {
-  return prisma.answerBankEntry.findMany({
+  const rows = await prisma.answerBankEntry.findMany({
     where: { userId },
     orderBy: { key: "asc" },
     select: { id: true, key: true, questionPattern: true, answer: true, sensitive: true },
+  });
+
+  return rows.map((row) => {
+    if (!row.sensitive) return row;
+    try {
+      return { ...row, answer: decrypt(row.answer) };
+    } catch (error) {
+      if (!(error instanceof DecryptionError)) throw error;
+      // A tampered or re-keyed value must not break the whole page, and the
+      // warning carries the row id only, never the value (I7).
+      console.warn(`answer.decrypt_failed id=${row.id}`);
+      return { ...row, answer: "" };
+    }
   });
 }
 

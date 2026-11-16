@@ -1,6 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import PgBoss from "pg-boss";
+import { assertProductionConfig } from "@jobpilot/core";
 import { saveJobs, writeAudit } from "@jobpilot/db";
 import { runScheduledTick } from "@jobpilot/autopilot";
 import {
@@ -44,6 +45,10 @@ const handleFetchSources = makeFetchSourcesHandler({
 });
 
 async function main(): Promise<void> {
+  // The worker holds the same secrets as the web app, so it refuses to start in
+  // production with a publicly known value (H4).
+  assertProductionConfig(process.env);
+
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
     throw new Error("DATABASE_URL is not set.");
