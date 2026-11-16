@@ -3,6 +3,7 @@ import { z } from "zod";
 import { auth } from "@/auth";
 import { looksSensitive } from "@jobpilot/apply";
 import { deleteAnswer, listAnswers, upsertAnswer } from "@jobpilot/db";
+import { requireUserRequest } from "@/lib/guard";
 
 export const dynamic = "force-dynamic";
 
@@ -31,9 +32,9 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const session = await auth();
-  const userId = session?.user?.id;
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const guarded = await requireUserRequest(req);
+  if (guarded instanceof Response) return guarded;
+  const { userId } = guarded;
 
   let body: unknown;
   try {
@@ -66,9 +67,9 @@ export async function POST(req: Request) {
 }
 
 export async function DELETE(req: Request) {
-  const session = await auth();
-  const userId = session?.user?.id;
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const guarded = await requireUserRequest(req);
+  if (guarded instanceof Response) return guarded;
+  const { userId } = guarded;
 
   const id = new URL(req.url).searchParams.get("id");
   if (!id) {

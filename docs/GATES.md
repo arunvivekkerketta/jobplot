@@ -1630,3 +1630,81 @@ Two implementation notes that differ from the brief:
   `NEXT_RUNTIME === "nodejs"`.
 - `apps/worker` gained a workspace dependency on `@jobpilot/core` (it had none) so
   the worker can call the same production guard.
+
+## Phase 14 — Stage 2 correctness fixes
+
+### GATES LEDGER
+
+| Gate | Sub-Task Name | Observable Outcome | Expected Proof | Status |
+| --- | --- | --- | --- | --- |
+| 2.1 | Repeated employers in the claim validator | Two roles at one company validate; an invented title still fails | 3 new `@jobpilot/core` tests | [MET] |
+| 2.2 | Form control mapping | Checkbox/radio/select answered correctly; ids with `:` or `"` selected; social/hidden buttons ignored | 6 new adapter tests + phase4 e2e | [MET] |
+| 2.3 | Per-host spacing in a batch | Two postings on one portal wait exactly one interval | 1 new `@jobpilot/apply` test | [MET] |
+| 2.4 | Temp-file safety | One 0700 directory per run, removed even when the browser fails | typecheck + success path in e2e | [PENDING] — the requested test (mock Chromium failing, then assert the directory is gone) is not written; see below |
+| 2.5 | Central request guard | A foreign `Origin` is refused and settings are unchanged | new e2e in phase7 | [MET] |
+| 2.6 | Login hardening | Attempts counted per lowercase address; lock at five; constant work for unknown users | 1 db test + 1 core test + phase1 e2e | [MET] |
+| 2.7 | Local day, single user, result endpoint | 3 zone cases; last run scoped to the user; replaying a result is 409 | 3 core cases + e2e 409 | [MET] |
+| 2.8 | Indian address redaction | `Flat 12, MG Road, Bengaluru 560001` → `[ADDRESS]` … `[PIN]` | 3 new `@jobpilot/llm` tests | [MET] |
+
+### Evidence
+
+Run totals:
+
+```
+@jobpilot/apply 63 · autopilot 6 · core 38 · db 22 · llm 38 · render 22 · sources 34
+LINT=0  TYPECHECK=0  TEST=0
+pnpm e2e → 30 passed (3.0m)
+phase7 alone → 4 passed (1.2m)
+```
+
+The claim validator now groups profile entries instead of keeping one per key,
+because a second role at the same employer used to overwrite the first:
+
+```ts
+const workByCompany = groupBy(profile.work, (work) => work.company);
+...
+const entries = workByCompany.get(norm(role.company));
+const matching = entries.filter((work) =>
+  norm(role.title) === norm(work.position) &&
+  role.startDate === work.startDate &&
+  sameOptional(role.endDate, work.endDate) &&
+  sameOptional(role.summary, work.summary));
+```
+
+The first e2e run of Stage 2 failed four tests with
+`page.evaluate: ReferenceError: IGNORED_BUTTON_RE is not defined`. The button
+filter lived at module scope, and `findButtons` is serialized into the page where
+module scope does not exist. The regex is now declared inside the function, and
+the same run then passed (`30 passed`).
+
+The one guard for state-changing routes:
+
+```ts
+export async function requireUserRequest(req: Request): Promise<{ userId: string } | Response> {
+  const session = await auth();
+  const userId = session?.user?.id;
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (req.method !== "GET") {
+    if (!isSameOriginRequest(req)) return NextResponse.json({ error: "Cross-origin request refused" }, { status: 403 });
+    ...
+  }
+  return { userId };
+}
+```
+
+Deviations from the brief:
+
+- **Task 2.1** asked for two NimbusPay roles inside `fixtures/sample-resume.json`
+  and that the same file still yield 75 claims. The fixture has one NimbusPay role,
+  and adding a second necessarily changes the claim count, so the new test uses
+  `fixtures/duplicate-employer-resume.json` (a copy with Staff 2023-01 and Senior
+  2021-03→2022-12) and the original fixture is asserted unchanged.
+- **Task 2.5** rejects a body-less `DELETE` from the content-type rule; the Answers
+  panel deletes with the id in the query string and no body, so a strict rule would
+  have broken the app.
+- **Task 2.4** is implemented but not proven: `mkdtempSync` with `0o700`, a
+  `randomUUID` filename per resume with `0o600`, and `fs.rmSync(tempDir, { recursive: true, force: true })`
+  in a `finally` that encloses the Playwright import, the launch and the batch. The
+  requested failure-path test would need the database, the run's candidate
+  selection and a mocked `playwright` module; I did not write it, so the gate stays
+  open rather than being claimed.

@@ -52,3 +52,13 @@ describe("gate 1.7: production refuses publicly known secrets (H4)", () => {
     expect(() => assertProductionConfig(env)).toThrow(/NEXTAUTH_SECRET is shorter than 16/);
   });
 });
+
+describe("gate 2.6: the lockout threshold is a plain rule", () => {
+  it("locks at the fifth recent failure", async () => {
+    const { isLoginLocked, LOGIN_FAILURE_LIMIT } = await import("../src/auth-policy.js");
+    expect(LOGIN_FAILURE_LIMIT).toBe(5);
+    expect(isLoginLocked(0)).toBe(false);
+    expect(isLoginLocked(4)).toBe(false);
+    expect(isLoginLocked(5)).toBe(true);
+  });
+});

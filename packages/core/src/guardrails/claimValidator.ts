@@ -32,12 +32,32 @@ function sameOptional(a?: string, b?: string): boolean {
 }
 
 /**
+ * Groups profile entries by a normalized key. Two roles (or schools, skill
+ * groups, projects, certificates) can share a key — the same employer twice is
+ * ordinary — so a lookup must consider every entry rather than keep the last one.
+ */
+function groupBy<T>(entries: readonly T[], key: (entry: T) => string): Map<string, T[]> {
+  const map = new Map<string, T[]>();
+  for (const entry of entries) {
+    const normalized = norm(key(entry));
+    const list = map.get(normalized);
+    if (list) list.push(entry);
+    else map.set(normalized, [entry]);
+  }
+  return map;
+}
+
+/**
  * I1 — Truth. Every employer, title, date, bullet, school, skill, project and
  * certificate in the document must already exist in the master profile.
  *
  * Phase 2 documents are verbatim projections of the profile, so comparisons
  * are exact after whitespace/case normalization. Phase 3 tailoring must keep
  * satisfying this: it may reorder and omit facts, never invent them.
+ *
+ * When one key appears more than once in the profile, a claim is accepted if it
+ * matches ANY of those entries: a promotion at the same company must not make a
+ * truthful resume fail.
  */
 export function validateResumeDocument(
   profile: JsonResumeProfile,
@@ -72,30 +92,44 @@ export function validateResumeDocument(
   );
   checkOptionalContact("summary", profile.basics.summary, doc.contact.summary);
 
-  const workByCompany = new Map(profile.work.map((w) => [norm(w.company), w]));
+  const workByCompany = groupBy(profile.work, (work) => work.company);
 
   for (const role of doc.roles) {
     const path = `roles[${role.company}]`;
     checkedClaims += 2; // title + dates
-    const work = workByCompany.get(norm(role.company));
-    if (!work) {
+    const entries = workByCompany.get(norm(role.company));
+    if (!entries || entries.length === 0) {
       fail("UNKNOWN_EMPLOYER", `${path}.company`, role.company);
       continue;
     }
-    if (norm(role.title) !== norm(work.position)) {
-      fail("UNKNOWN_TITLE", `${path}.title`, role.title);
-    }
-    if (
-      role.startDate !== work.startDate ||
-      !sameOptional(role.endDate, work.endDate)
-    ) {
-      fail("UNKNOWN_DATE", `${path}.dates`, `${role.startDate}–${role.endDate ?? ""}`);
-    }
-    if (!sameOptional(role.summary, work.summary)) {
-      fail("UNKNOWN_BULLET", `${path}.summary`, role.summary ?? "");
+
+    const matching = entries.filter(
+      (work) =>
+        norm(role.title) === norm(work.position) &&
+        role.startDate === work.startDate &&
+        sameOptional(role.endDate, work.endDate) &&
+        sameOptional(role.summary, work.summary),
+    );
+
+    if (matching.length === 0) {
+      // Report the differences against the closest entry (the first one stored)
+      // so the message names what is actually wrong.
+      const closest = entries[0]!;
+      if (norm(role.title) !== norm(closest.position)) {
+        fail("UNKNOWN_TITLE", `${path}.title`, role.title);
+      }
+      if (role.startDate !== closest.startDate || !sameOptional(role.endDate, closest.endDate)) {
+        fail("UNKNOWN_DATE", `${path}.dates`, `${role.startDate}–${role.endDate ?? ""}`);
+      }
+      if (!sameOptional(role.summary, closest.summary)) {
+        fail("UNKNOWN_BULLET", `${path}.summary`, role.summary ?? "");
+      }
     }
 
-    const allowedBullets = new Set(work.highlights.map((h) => norm(h.text)));
+    // A bullet is a fact of the company, so any of its roles may supply it.
+    const allowedBullets = new Set(
+      entries.flatMap((work) => work.highlights.map((highlight) => norm(highlight.text))),
+    );
     for (const [index, bullet] of role.highlights.entries()) {
       checkedClaims += 1;
       if (!allowedBullets.has(norm(bullet))) {
@@ -104,39 +138,42 @@ export function validateResumeDocument(
     }
   }
 
-  const educationByInstitution = new Map(
-    profile.education.map((e) => [norm(e.institution), e]),
-  );
+  const educationByInstitution = groupBy(profile.education, (entry) => entry.institution);
   for (const edu of doc.education) {
     checkedClaims += 1;
-    const entry = educationByInstitution.get(norm(edu.institution));
-    if (!entry) {
+    const entries = educationByInstitution.get(norm(edu.institution));
+    if (!entries || entries.length === 0) {
       fail("UNKNOWN_EDUCATION", `education[${edu.institution}]`, edu.institution);
       continue;
     }
-    if (
-      !sameOptional(edu.area, entry.area) ||
-      !sameOptional(edu.studyType, entry.studyType) ||
-      !sameOptional(edu.startDate, entry.startDate) ||
-      !sameOptional(edu.endDate, entry.endDate) ||
-      !sameOptional(edu.score, entry.score)
-    ) {
+    const matches = entries.some(
+      (entry) =>
+        sameOptional(edu.area, entry.area) &&
+        sameOptional(edu.studyType, entry.studyType) &&
+        sameOptional(edu.startDate, entry.startDate) &&
+        sameOptional(edu.endDate, entry.endDate) &&
+        sameOptional(edu.score, entry.score),
+    );
+    if (!matches) {
       fail("UNKNOWN_EDUCATION", `education[${edu.institution}].details`, edu.institution);
     }
   }
 
-  const skillsByName = new Map(profile.skills.map((s) => [norm(s.name), s]));
+  const skillsByName = groupBy(profile.skills, (skill) => skill.name);
   for (const group of doc.skills) {
     checkedClaims += 1;
-    const entry = skillsByName.get(norm(group.name));
-    if (!entry) {
+    const entries = skillsByName.get(norm(group.name));
+    if (!entries || entries.length === 0) {
       fail("UNKNOWN_SKILL", `skills[${group.name}]`, group.name);
       continue;
     }
-    if (!sameOptional(group.level, entry.level)) {
+    const levelKnown = entries.some((entry) => sameOptional(group.level, entry.level));
+    if (!levelKnown) {
       fail("UNKNOWN_SKILL", `skills[${group.name}].level`, group.level ?? "");
     }
-    const allowed = new Set(entry.keywords.map((k) => norm(k.keyword)));
+    const allowed = new Set(
+      entries.flatMap((entry) => entry.keywords.map((keyword) => norm(keyword.keyword))),
+    );
     for (const [index, keyword] of group.keywords.entries()) {
       checkedClaims += 1;
       if (!allowed.has(norm(keyword))) {
@@ -145,34 +182,53 @@ export function validateResumeDocument(
     }
   }
 
-  const projectsByName = new Map(
-    profile.projects.map((p) => [norm(p.name), p]),
-  );
+  const projectsByName = groupBy(profile.projects, (project) => project.name);
   for (const project of doc.projects) {
     checkedClaims += 1;
-    const entry = projectsByName.get(norm(project.name));
-    if (!entry) {
+    const entries = projectsByName.get(norm(project.name));
+    if (!entries || entries.length === 0) {
       fail("UNKNOWN_PROJECT", `projects[${project.name}]`, project.name);
       continue;
     }
-    if (!sameOptional(project.description, entry.description)) {
-      fail("UNKNOWN_BULLET", `projects[${project.name}].description`, project.description ?? "");
+    const matching = entries.filter(
+      (entry) =>
+        sameOptional(project.description, entry.description) &&
+        sameOptional(project.startDate, entry.startDate) &&
+        sameOptional(project.endDate, entry.endDate) &&
+        sameOptional(project.url, entry.url),
+    );
+    if (matching.length === 0) {
+      const detailsMatch = entries.some((entry) =>
+        sameOptional(project.startDate, entry.startDate) &&
+        sameOptional(project.endDate, entry.endDate) &&
+        sameOptional(project.url, entry.url),
+      );
+      if (!detailsMatch) {
+        fail("UNKNOWN_DATE", `projects[${project.name}].dates`, project.name);
+      }
+      const descriptionMatch = entries.some((entry) =>
+        sameOptional(project.description, entry.description),
+      );
+      if (!descriptionMatch) {
+        fail(
+          "UNKNOWN_BULLET",
+          `projects[${project.name}].description`,
+          project.description ?? "",
+        );
+      }
     }
-    if (
-      !sameOptional(project.startDate, entry.startDate) ||
-      !sameOptional(project.endDate, entry.endDate) ||
-      !sameOptional(project.url, entry.url)
-    ) {
-      fail("UNKNOWN_DATE", `projects[${project.name}].dates`, project.name);
-    }
-    const allowedBullets = new Set(entry.highlights.map((h) => norm(h.text)));
+    const allowedBullets = new Set(
+      entries.flatMap((entry) => entry.highlights.map((highlight) => norm(highlight.text))),
+    );
     for (const [index, bullet] of project.highlights.entries()) {
       checkedClaims += 1;
       if (!allowedBullets.has(norm(bullet))) {
         fail("UNKNOWN_BULLET", `projects[${project.name}].highlights[${index}]`, bullet);
       }
     }
-    const allowedKeywords = new Set(entry.keywords.map((k) => norm(k.keyword)));
+    const allowedKeywords = new Set(
+      entries.flatMap((entry) => entry.keywords.map((keyword) => norm(keyword.keyword))),
+    );
     for (const [index, keyword] of project.keywords.entries()) {
       checkedClaims += 1;
       if (!allowedKeywords.has(norm(keyword))) {
@@ -181,17 +237,18 @@ export function validateResumeDocument(
     }
   }
 
-  const certificatesByName = new Map(
-    profile.certificates.map((c) => [norm(c.name), c]),
-  );
+  const certificatesByName = groupBy(profile.certificates, (certificate) => certificate.name);
   for (const cert of doc.certificates) {
     checkedClaims += 2;
-    const entry = certificatesByName.get(norm(cert.name));
-    if (!entry) {
+    const entries = certificatesByName.get(norm(cert.name));
+    if (!entries || entries.length === 0) {
       fail("UNKNOWN_CERTIFICATE", `certificates[${cert.name}]`, cert.name);
       continue;
     }
-    if (!sameOptional(cert.issuer, entry.issuer) || !sameOptional(cert.date, entry.date)) {
+    const matches = entries.some(
+      (entry) => sameOptional(cert.issuer, entry.issuer) && sameOptional(cert.date, entry.date),
+    );
+    if (!matches) {
       fail("UNKNOWN_CERTIFICATE", `certificates[${cert.name}].details`, cert.name);
     }
   }

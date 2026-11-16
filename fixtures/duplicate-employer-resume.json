@@ -1,0 +1,227 @@
+{
+  "basics": {
+    "name": "Priya Sharma",
+    "email": "priya.sharma@example.com",
+    "phone": "+91 98765 43210",
+    "url": "https://priyasharma.dev",
+    "summary": "Backend engineer with 7 years building data-intensive payments and analytics platforms in Python and Go, specializing in high-throughput pipelines on Kubernetes.",
+    "location": {
+      "city": "Bengaluru",
+      "region": "Karnataka",
+      "country": "India"
+    }
+  },
+  "work": [
+    {
+      "company": "NimbusPay",
+      "position": "Staff Backend Engineer",
+      "startDate": "2023-01",
+      "summary": "Led the payments platform group.",
+      "highlights": [
+        {
+          "text": "Owned the ledger migration to double-entry accounting."
+        }
+      ]
+    },
+    {
+      "company": "NimbusPay",
+      "position": "Senior Backend Engineer",
+      "startDate": "2021-03",
+      "summary": "Core payments platform team serving 4 million monthly active users.",
+      "highlights": [
+        "Cut payment settlement latency 40% by redesigning the Kafka consumer pipeline in Python",
+        "Scaled transaction ingestion from 1.2k to 9k events per second across 30 microservices",
+        "Led migration of 45 services to Kubernetes, reducing deploy time from 25 minutes to 6",
+        "Introduced OpenTelemetry tracing across 60 endpoints, cutting mean time to diagnosis 35%",
+        "Drove PostgreSQL partitioning project that reduced p99 query time from 800ms to 120ms",
+        "Mentored 4 engineers; 2 promoted within a year"
+      ],
+      "endDate": "2022-12"
+    },
+    {
+      "company": "DataForge Analytics",
+      "position": "Backend Engineer",
+      "startDate": "2019-01",
+      "endDate": "2021-02",
+      "summary": "Analytics infrastructure for retail customers.",
+      "highlights": [
+        "Built ETL pipelines in Python processing 3M records daily into PostgreSQL and Redis",
+        "Reduced infra spend 22% ($180k annually) by consolidating 12 EC2 instances onto 5",
+        "Shipped a GraphQL API used by 15 internal teams with p95 latency under 90ms",
+        "Automated CI/CD with GitHub Actions, cutting the release cycle from 2 weeks to 2 days",
+        "Wrote 500+ unit and integration tests, raising coverage from 48% to 85%"
+      ]
+    },
+    {
+      "company": "CloudLoom Systems",
+      "position": "Software Engineer",
+      "startDate": "2017-06",
+      "endDate": "2018-12",
+      "summary": "Cloud tooling for enterprise customers.",
+      "highlights": [
+        "Developed 9 REST endpoints in Go for the customer onboarding flow",
+        "Built a Docker-based local development environment adopted by all 18 engineers",
+        "Migrated legacy cron jobs to Airflow, eliminating 30 manual hours per month",
+        "Introduced load tests that caught a connection-pool leak ahead of 5x festive traffic",
+        "Fixed 120+ bugs across the billing module with zero regressions"
+      ]
+    }
+  ],
+  "education": [
+    {
+      "institution": "Indian Institute of Technology, Bombay",
+      "area": "Computer Science",
+      "studyType": "B.Tech",
+      "startDate": "2013-07",
+      "endDate": "2017-05",
+      "score": "8.7 CGPA",
+      "courses": [
+        "Distributed Systems",
+        "Databases",
+        "Machine Learning"
+      ]
+    },
+    {
+      "institution": "Delhi Public School",
+      "area": "Science",
+      "studyType": "AISSCE",
+      "startDate": "2011-04",
+      "endDate": "2013-03",
+      "score": "94%"
+    }
+  ],
+  "skills": [
+    {
+      "name": "Python",
+      "keywords": [
+        "pandas",
+        "FastAPI",
+        "pytest"
+      ]
+    },
+    {
+      "name": "Go",
+      "keywords": [
+        "goroutines",
+        "gRPC"
+      ]
+    },
+    {
+      "name": "PostgreSQL",
+      "keywords": [
+        "query optimization",
+        "partitioning"
+      ]
+    },
+    {
+      "name": "Kubernetes",
+      "keywords": [
+        "Helm",
+        "operators"
+      ]
+    },
+    {
+      "name": "Docker",
+      "keywords": []
+    },
+    {
+      "name": "Kafka",
+      "keywords": [
+        "stream processing"
+      ]
+    },
+    {
+      "name": "Redis",
+      "keywords": [
+        "caching"
+      ]
+    },
+    {
+      "name": "AWS",
+      "keywords": [
+        "EC2",
+        "S3",
+        "Lambda"
+      ]
+    },
+    {
+      "name": "Terraform",
+      "keywords": [
+        "modules"
+      ]
+    },
+    {
+      "name": "GraphQL",
+      "keywords": [
+        "Apollo"
+      ]
+    },
+    {
+      "name": "React",
+      "keywords": [
+        "TypeScript"
+      ]
+    },
+    {
+      "name": "Airflow",
+      "keywords": [
+        "DAGs"
+      ]
+    }
+  ],
+  "projects": [
+    {
+      "name": "OpenLedger",
+      "description": "Open-source double-entry ledger library in Python",
+      "highlights": [
+        "Designed an immutable ledger engine processing 50k journal entries per second",
+        "Grew the project to 1.8k GitHub stars and 12 contributors"
+      ],
+      "keywords": [
+        "Python",
+        "PostgreSQL"
+      ],
+      "startDate": "2022-01",
+      "endDate": "2022-08",
+      "url": "https://github.com/priyasharma/openledger",
+      "roles": [
+        "Creator"
+      ],
+      "entity": "Open source",
+      "type": "library"
+    },
+    {
+      "name": "QueueScope",
+      "description": "Kafka consumer-lag monitoring dashboard",
+      "highlights": [
+        "Built consumer-lag alerts that cut incident response time 30%",
+        "Deployed on Kubernetes across 3 clusters monitoring 200 topics"
+      ],
+      "keywords": [
+        "Go",
+        "Kafka",
+        "Kubernetes"
+      ],
+      "startDate": "2023-02",
+      "endDate": "2023-06",
+      "url": "https://github.com/priyasharma/queuescope",
+      "roles": [
+        "Maintainer"
+      ],
+      "entity": "Open source",
+      "type": "tool"
+    }
+  ],
+  "certificates": [
+    {
+      "name": "Certified Kubernetes Administrator",
+      "issuer": "Cloud Native Computing Foundation",
+      "date": "2022-05"
+    },
+    {
+      "name": "AWS Certified Solutions Architect - Associate",
+      "issuer": "Amazon Web Services",
+      "date": "2021-11"
+    }
+  ]
+}

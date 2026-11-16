@@ -177,3 +177,12 @@ resume can be tailored to a posting from the profile's own facts, reviewed,
 approved by hand and only then attached to an application, and an unlocked portal
 can submit qualifying applications unattended until a cap or the kill switch stops
 it.
+
+## Single-user by design
+
+JobPilot runs for **one admin user**. The account is created by `pnpm db:seed`
+from `ADMIN_EMAIL`/`ADMIN_PASSWORD`, applications are unique per posting, and the
+daily submission cap is global rather than per user. Multi-user support is not
+implemented: there is no sign-up, no user switcher and no per-user isolation
+beyond the `userId` columns every query already filters on. Treat the deployment
+as a personal tool, not as a shared service.

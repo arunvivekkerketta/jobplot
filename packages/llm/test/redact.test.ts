@@ -32,3 +32,22 @@ describe("redact (gate 1.13)", () => {
     expect(out.nested.phone).toBe("[PHONE]");
   });
 });
+
+describe("gate 2.8: Indian addresses and PIN codes are redacted (L2)", () => {
+  it("masks a flat-and-road address and its PIN code", () => {
+    const redacted = redact("Flat 12, MG Road, Bengaluru 560001");
+    expect(redacted).toContain("[ADDRESS]");
+    expect(redacted).toContain("[PIN]");
+    expect(redacted).not.toContain("MG Road");
+    expect(redacted).not.toContain("560001");
+  });
+
+  it("still masks a phone number", () => {
+    expect(redact("call 9876543210")).toBe("call [PHONE]");
+  });
+
+  it("leaves ordinary numbers alone", () => {
+    const text = "I joined in 2019 and shipped three services.";
+    expect(redact(text)).toBe(text);
+  });
+});

@@ -1,16 +1,16 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
 import { approveResumeVersion, findResumeVersion, prisma } from "@jobpilot/db";
+import { requireUserRequest } from "@/lib/guard";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(
-  _req: Request,
+  req: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  const session = await auth();
-  const userId = session?.user?.id;
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const guarded = await requireUserRequest(req);
+  if (guarded instanceof Response) return guarded;
+  const { userId } = guarded;
 
   const { id } = await context.params;
   const version = await findResumeVersion(id);

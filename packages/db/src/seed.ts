@@ -15,7 +15,7 @@ try {
 const prisma = new PrismaClient();
 
 async function main(): Promise<void> {
-  const email = process.env.ADMIN_EMAIL;
+  const email = process.env.ADMIN_EMAIL?.trim().toLowerCase();
   const password = process.env.ADMIN_PASSWORD;
   if (!email || !password) {
     throw new Error(

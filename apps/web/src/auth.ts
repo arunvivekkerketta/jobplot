@@ -1,6 +1,19 @@
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
-import { prisma, verifyPassword } from "@jobpilot/db";
+import { isLoginLocked } from "@jobpilot/core";
+import {
+  hashPassword,
+  prisma,
+  recentFailedLogins,
+  recordLoginAttempt,
+  verifyPassword,
+} from "@jobpilot/db";
+
+/**
+ * Hashed once at module load and compared against when the address does not
+ * exist, so a sign-in for an unknown user costs the same work as a real one (M7).
+ */
+const dummyHash = hashPassword("dummy-password-that-is-never-valid");
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   trustHost: true,
@@ -18,13 +31,27 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         password: { label: "Password", type: "password" },
       },
       async authorize(credentials) {
-        const email = credentials?.email;
+        const rawEmail = credentials?.email;
         const password = credentials?.password;
-        if (typeof email !== "string" || typeof password !== "string") return null;
+        if (typeof rawEmail !== "string" || typeof password !== "string") return null;
+        // Addresses are stored lowercase, so a differently cased sign-in must
+        // still find the account.
+        const email = rawEmail.trim().toLowerCase();
+
+        // Too many recent failures: refuse without touching the password, so the
+        // response cannot be used as a fast oracle (M7).
+        if (isLoginLocked(await recentFailedLogins(email, 15))) return null;
+
         const user = await prisma.user.findUnique({ where: { email } });
-        if (!user) return null;
-        const valid = await verifyPassword(user.passwordHash, password);
-        if (!valid) return null;
+        const hash = user?.passwordHash ?? (await dummyHash);
+        const valid = await verifyPassword(hash, password);
+
+        if (!user || !valid) {
+          await recordLoginAttempt(email, false);
+          return null;
+        }
+
+        await recordLoginAttempt(email, true);
         return { id: user.id, email: user.email, name: user.email };
       },
     }),

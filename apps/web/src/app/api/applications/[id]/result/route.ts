@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/auth";
 import { prisma, recordApplicationResult } from "@jobpilot/db";
+import { requireUserRequest } from "@/lib/guard";
 
 export const dynamic = "force-dynamic";
 
@@ -24,10 +24,8 @@ export async function POST(
   req: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const guarded = await requireUserRequest(req);
+  if (guarded instanceof Response) return guarded;
 
   const { id } = await context.params;
 
@@ -48,10 +46,28 @@ export async function POST(
 
   const application = await prisma.application.findUnique({
     where: { id },
-    select: { id: true },
+    select: { id: true, status: true },
   });
   if (!application) {
     return NextResponse.json({ error: "Unknown application" }, { status: 404 });
+  }
+
+  // A finished application never changes again, and a result may only be reported
+  // while the row is still in flight (L1).
+  if (application.status === "SUBMITTED") {
+    return NextResponse.json(
+      { error: "Application is already submitted" },
+      { status: 409 },
+    );
+  }
+  if (
+    parsed.data.status === "SUBMITTED" &&
+    !["QUEUED", "RUNNING", "PAUSED_NEEDS_HUMAN"].includes(application.status)
+  ) {
+    return NextResponse.json(
+      { error: `Cannot report SUBMITTED from status ${application.status}` },
+      { status: 409 },
+    );
   }
 
   const saved = await recordApplicationResult({

@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/auth";
-import { isSameOriginRequest } from "@/lib/origin";
 import { prisma, writeAudit } from "@jobpilot/db";
 import {
   BrowserUnavailableError,
@@ -10,6 +9,7 @@ import {
   runScheduledTick,
   updatePortal,
 } from "@jobpilot/autopilot";
+import { requireUserRequest } from "@/lib/guard";
 
 export const dynamic = "force-dynamic";
 
@@ -37,12 +37,9 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const session = await auth();
-  const userId = session?.user?.id;
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!isSameOriginRequest(req)) {
-    return NextResponse.json({ error: "Cross-origin request refused" }, { status: 403 });
-  }
+  const guarded = await requireUserRequest(req);
+  if (guarded instanceof Response) return guarded;
+  const { userId } = guarded;
 
   let body: unknown;
   try {

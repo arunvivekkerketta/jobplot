@@ -135,6 +135,18 @@ model ApplicationEvent {
   at            DateTime    @default(now())
 }
 
+/// One password attempt, so repeated failures for an address can be throttled (M7).
+/// No relation to User: an attempt for an address that does not exist is recorded
+/// too, otherwise the timing and the lockout would reveal which accounts exist.
+model LoginAttempt {
+  id    String   @id @default(cuid())
+  email String
+  at    DateTime @default(now())
+  ok    Boolean  @default(false)
+
+  @@index([email, at])
+}
+
 model AnswerBankEntry {
   id              String   @id @default(cuid())
   userId          String

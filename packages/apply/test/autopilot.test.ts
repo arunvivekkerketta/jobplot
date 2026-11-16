@@ -323,3 +323,38 @@ describe("gate 1.1: the kill switch and the per-host interval act on the run in 
     expect(outcome?.actions.some((action) => action.kind === "BLOCK")).toBe(true);
   });
 });
+
+describe("gate 2.3: the same host is spaced, not stopped", () => {
+  it("waits one interval for the second posting on the same portal", async () => {
+    const waits: number[] = [];
+    const counter = { submits: 0 };
+    const clock = { now: new Date(now.getTime()), last: null as Date | null };
+
+    const report = await runAutopilot({
+      targets: [
+        { jobId: "a", portal: "greenhouse", url: "http://localhost:4600/greenhouse/sample" },
+        { jobId: "b", portal: "greenhouse", url: "http://localhost:4600/greenhouse/sample" },
+      ],
+      openPage: async () => fakePage(counter),
+      profile: { basics: { name: "Priya Sharma", email: "priya@example.com" } },
+      preflightFor: () => ({
+        settings,
+        submissionsToday: 0,
+        now: new Date(clock.now),
+        ...(clock.last ? { lastActionAt: clock.last } : {}),
+      }),
+      onOutcome: async () => {
+        clock.last = new Date(clock.now);
+      },
+      sleep: async (ms) => {
+        waits.push(ms);
+        clock.now = new Date(clock.now.getTime() + ms);
+      },
+    });
+
+    expect(waits).toEqual([30_000]);
+    expect(counter.submits).toBe(2);
+    expect(report.outcomes.map((outcome) => outcome.status)).toEqual(["SUBMITTED", "SUBMITTED"]);
+    expect(report.stopReason).toBeUndefined();
+  });
+});

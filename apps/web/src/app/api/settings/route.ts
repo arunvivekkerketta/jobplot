@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { z } from "zod";
 import { prisma, writeAudit } from "@jobpilot/db";
+import { requireUserRequest } from "@/lib/guard";
 
 export async function GET() {
   const session = await auth();
@@ -26,9 +27,9 @@ const putSchema = z.object({
 });
 
 export async function PUT(req: Request) {
-  const session = await auth();
-  const userId = session?.user?.id;
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const guarded = await requireUserRequest(req);
+  if (guarded instanceof Response) return guarded;
+  const { userId } = guarded;
 
   let body: unknown;
   try {

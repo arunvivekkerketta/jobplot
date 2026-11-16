@@ -17,6 +17,7 @@ import {
 import { renderResume, tailorDocument } from "@jobpilot/render";
 import { tailorWithClient, type LLMClient } from "@jobpilot/llm";
 import { makeExplanationClient } from "@/lib/matcher";
+import { requireUserRequest } from "@/lib/guard";
 
 export const dynamic = "force-dynamic";
 
@@ -53,9 +54,9 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const session = await auth();
-  const userId = session?.user?.id;
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const guarded = await requireUserRequest(req);
+  if (guarded instanceof Response) return guarded;
+  const { userId } = guarded;
 
   let body: unknown;
   try {

@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
 import type { JsonResumeProfile } from "@jobpilot/core";
 import { prisma, saveRenderedDocument, writeAudit } from "@jobpilot/db";
 import { renderResume, type ResumeFormat } from "@jobpilot/render";
+import { requireUserRequest } from "@/lib/guard";
 
 const FORMATS = new Set<ResumeFormat>(["html", "pdf", "docx"]);
 
@@ -19,11 +19,9 @@ function slugify(value: string): string {
 }
 
 export async function POST(req: Request) {
-  const session = await auth();
-  const userId = session?.user?.id;
-  if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const guarded = await requireUserRequest(req);
+  if (guarded instanceof Response) return guarded;
+  const { userId } = guarded;
 
   let body: unknown;
   try {

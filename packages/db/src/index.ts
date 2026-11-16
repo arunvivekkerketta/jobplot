@@ -2,6 +2,7 @@ import { Prisma, PrismaClient } from "@prisma/client";
 import { redactDeep } from "@jobpilot/llm";
 import {
   DecryptionError,
+  LOGIN_ATTEMPT_RETENTION_DAYS,
   buildFactIndex,
   decrypt,
   encrypt,
@@ -764,6 +765,26 @@ export async function upsertAnswer(
     });
     return entry;
   }, TX_OPTIONS);
+}
+
+/**
+ * Records one password attempt (M7). The address is normalized so a differently
+ * cased sign-in counts against the same account, and rows older than the
+ * retention window are removed on the way through.
+ */
+export async function recordLoginAttempt(email: string, ok: boolean): Promise<void> {
+  const normalized = email.trim().toLowerCase();
+  await prisma.loginAttempt.create({ data: { email: normalized, ok } });
+  const cutoff = new Date(Date.now() - LOGIN_ATTEMPT_RETENTION_DAYS * 24 * 60 * 60_000);
+  await prisma.loginAttempt.deleteMany({ where: { at: { lt: cutoff } } });
+}
+
+/** Failed attempts for one address inside the throttling window. */
+export async function recentFailedLogins(email: string, minutes: number): Promise<number> {
+  const since = new Date(Date.now() - minutes * 60_000);
+  return prisma.loginAttempt.count({
+    where: { email: email.trim().toLowerCase(), ok: false, at: { gte: since } },
+  });
 }
 
 export async function listAnswers(userId: string) {

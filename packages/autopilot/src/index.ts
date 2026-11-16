@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -12,7 +13,7 @@ import {
   type PageLike,
   type SkippedCandidate,
 } from "@jobpilot/apply";
-import type { JsonResumeProfile } from "@jobpilot/core";
+import { startOfDayInZone, type JsonResumeProfile } from "@jobpilot/core";
 import {
   claimApplication,
   createApplication,
@@ -59,8 +60,12 @@ interface StoredCandidate extends AutopilotCandidate {
   pdfPath: string | null;
 }
 
+/**
+ * The daily cap is a calendar concept, so it follows APP_TIMEZONE rather than the
+ * server's own zone; a run at 01:00 in Kolkata must already count as a new day.
+ */
 function startOfToday(now = new Date()): Date {
-  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return startOfDayInZone(now, process.env.APP_TIMEZONE ?? "UTC");
 }
 
 async function settingsFor(userId: string) {
@@ -193,7 +198,9 @@ export async function loadAutopilotStatus(userId: string): Promise<AutopilotStat
     });
 
   const lastAudit = await prisma.auditLog.findFirst({
-    where: { action: "autopilot.run" },
+    // Scoped to this user: a single-row deployment would otherwise show the last
+    // run of whoever happened to trigger one.
+    where: { action: "autopilot.run", entityId: userId },
     orderBy: { at: "desc" },
     select: { at: true, payload: true },
   });
@@ -365,8 +372,12 @@ export async function runAutopilotNow(
   };
 
   const answers = await listAnswers(userId);
-  const tempFiles: string[] = [];
+  // One directory per run, readable only by this account and deleted on every
+  // exit path, including a browser that never starts (M5).
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobpilot-"));
+  fs.chmodSync(tempDir, 0o700);
   const resumePaths = new Map<string, string>();
+  try {
   for (const candidate of claimed) {
     const pdfPath = candidate.pdfPath;
     if (!pdfPath) continue;
@@ -374,9 +385,8 @@ export async function runAutopilotNow(
     if (!documentId) continue;
     const stored = await readDocumentBytes({ id: documentId, userId });
     if (!stored) continue;
-    const file = path.join(os.tmpdir(), `jobpilot-autopilot-${candidate.jobId}.pdf`);
-    fs.writeFileSync(file, stored.bytes);
-    tempFiles.push(file);
+    const file = path.join(tempDir, `${randomUUID()}.pdf`);
+    fs.writeFileSync(file, stored.bytes, { mode: 0o600 });
     resumePaths.set(candidate.jobId, file);
   }
 
@@ -497,9 +507,12 @@ export async function runAutopilotNow(
       skipped: selection.skipped,
       stopReason: report.stopReason ?? null,
     };
+    } finally {
+      await browser.close();
+    }
   } finally {
-    await browser.close();
-    for (const file of tempFiles) fs.rmSync(file, { force: true });
+    // Runs even when the browser runtime is missing or fails to launch.
+    fs.rmSync(tempDir, { recursive: true, force: true });
   }
 }
 /** Each scheduled tick spends at most one submission per user. */

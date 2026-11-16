@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/auth";
 import { saveJobs, writeAudit } from "@jobpilot/db";
 import {
   BOARD_PROVIDERS,
   SourceFetchError,
   fetchSourceJobs,
 } from "@jobpilot/sources";
+import { requireUserRequest } from "@/lib/guard";
 
 export const dynamic = "force-dynamic";
 
@@ -21,11 +21,8 @@ const boardInput = z.object({
  * reported failure, never a silent empty import (gate 3.13).
  */
 export async function POST(req: Request) {
-  const session = await auth();
-  const userId = session?.user?.id;
-  if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const guarded = await requireUserRequest(req);
+  if (guarded instanceof Response) return guarded;
 
   let body: unknown;
   try {

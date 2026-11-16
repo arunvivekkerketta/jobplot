@@ -175,6 +175,13 @@ test("gate 7.1-7.5: Auto-Pilot submits unattended behind portals, caps and audit
   expect(submittedRow?.status).toBe("SUBMITTED");
   expect(submittedRow?.events ?? 0).toBeGreaterThan(3);
 
+  // Gate 2.7: a finished application never accepts a second result (L1).
+  const replay = await page.request.post(
+    `/api/applications/${(submittedRow as unknown as { id: string }).id}/result`,
+    { data: { status: "SUBMITTED", actions: [] } },
+  );
+  expect(replay.status()).toBe(409);
+
   // Gate 7.3: the daily cap is read from stored submissions and blocks the next run.
   const status = (await (await page.request.get("/api/autopilot")).json()) as {
     submissionsToday: number;
@@ -283,4 +290,17 @@ test("gate 7.8: Auto-Pilot is behind the auth wall", async ({ request }) => {
   expect(
     (await request.post("/api/autopilot", { data: { action: "run" }, maxRedirects: 0 })).status(),
   ).toBe(307);
+});
+test("gate 2.5: a foreign origin cannot change settings (M1)", async ({ page }) => {
+  await login(page);
+
+  const before = (await (await page.request.get("/api/settings")).json()) as { dailyCap: number };
+  const refused = await page.request.put("/api/settings", {
+    data: { dailyCap: 3 },
+    headers: { origin: "https://evil.example" },
+  });
+  expect(refused.status()).toBe(403);
+
+  const after = (await (await page.request.get("/api/settings")).json()) as { dailyCap: number };
+  expect(after.dailyCap).toBe(before.dailyCap);
 });
