@@ -2,6 +2,7 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import {
   claimApplication,
   createApplication,
+  findApplicationForUser,
   listAnswers,
   prisma,
   releaseApplication,
@@ -36,7 +37,11 @@ async function makeJob(): Promise<{ id: string }> {
 
 async function makeApplication(): Promise<string> {
   const job = await makeJob();
-  const application = await createApplication({ jobId: job.id, portal: "manual" });
+  const application = await createApplication({
+    userId: await ensureUser(),
+    jobId: job.id,
+    portal: "manual",
+  });
   return application.id;
 }
 
@@ -97,6 +102,57 @@ describe("gate 1.4: one posting is run by one run at a time (H5)", () => {
     expect(stored.status).toBe("QUEUED");
     expect(stored.claimedAt).toBeNull();
     expect(await claimApplication(applicationId)).toBe(true);
+  });
+});
+
+describe("an application belongs to the account that queued it", () => {
+  it("lets two accounts apply to the same posting without sharing a row", async () => {
+    const owner = await ensureUser();
+    const other = await prisma.user.create({
+      data: { email: `${stamp}-other@jobpilot.test`, passwordHash: "not-a-real-hash" },
+      select: { id: true },
+    });
+    const job = await makeJob();
+
+    try {
+      const mine = await createApplication({ userId: owner, jobId: job.id, portal: "manual" });
+      const theirs = await createApplication({ userId: other.id, jobId: job.id, portal: "manual" });
+      expect(theirs.id).not.toBe(mine.id);
+
+      // A second call from the same account is still the same row (gate 4.6).
+      const again = await createApplication({ userId: other.id, jobId: job.id, portal: "manual" });
+      expect(again.id).toBe(theirs.id);
+
+      const owners = await prisma.application.findMany({
+        where: { jobId: job.id },
+        select: { userId: true },
+      });
+      expect(owners.map((row) => row.userId).sort()).toEqual([owner, other.id].sort());
+    } finally {
+      await prisma.application.deleteMany({ where: { jobId: job.id } });
+      await prisma.job.deleteMany({ where: { id: job.id } });
+      await prisma.user.deleteMany({ where: { id: other.id } });
+    }
+  });
+
+  it("answers another account's id the same way as one that does not exist", async () => {
+    const owner = await ensureUser();
+    const other = await prisma.user.create({
+      data: { email: `${stamp}-intruder@jobpilot.test`, passwordHash: "not-a-real-hash" },
+      select: { id: true },
+    });
+
+    try {
+      const applicationId = await makeApplication();
+
+      const mine = await findApplicationForUser({ id: applicationId, userId: owner });
+      expect(mine?.id).toBe(applicationId);
+
+      expect(await findApplicationForUser({ id: applicationId, userId: other.id })).toBeNull();
+      expect(await findApplicationForUser({ id: "cuid_that_does_not_exist", userId: owner })).toBeNull();
+    } finally {
+      await prisma.user.deleteMany({ where: { id: other.id } });
+    }
   });
 });
 

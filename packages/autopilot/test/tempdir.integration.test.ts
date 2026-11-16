@@ -161,7 +161,9 @@ describe.skipIf(!IS_E2E_DATABASE)("gate 2.4: a failed real run leaves no temp di
       expect(fs.existsSync(runDir)).toBe(false);
 
       // The claim was given back in the database, so the posting is retryable.
-      const application = await prisma.application.findUnique({ where: { jobId } });
+      const application = await prisma.application.findUnique({
+        where: { userId_jobId: { userId, jobId } },
+      });
       expect(application?.status).toBe("QUEUED");
       expect(application?.claimedAt).toBeNull();
 

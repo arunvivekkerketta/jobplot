@@ -269,23 +269,26 @@ export interface ApplicationAction {
 }
 
 /**
- * Queues an application for a job. `Application.jobId` is unique, so a second
- * call returns the existing row instead of creating a duplicate (gate 4.6).
+ * Queues an application for a job. `(userId, jobId)` is unique, so a second call
+ * by the same account returns its existing row instead of creating a duplicate
+ * (gate 4.6) — and another account's row is never returned.
  */
 export async function createApplication(input: {
+  userId: string;
   jobId: string;
   portal: string;
   mode?: "COPILOT" | "AUTOPILOT";
 }): Promise<{ id: string; status: string }> {
   return prisma.$transaction(async (tx) => {
     const existing = await tx.application.findUnique({
-      where: { jobId: input.jobId },
+      where: { userId_jobId: { userId: input.userId, jobId: input.jobId } },
       select: { id: true, status: true },
     });
     if (existing) return existing;
 
     const created = await tx.application.create({
       data: {
+        userId: input.userId,
         jobId: input.jobId,
         portal: input.portal,
         status: "QUEUED",
@@ -304,6 +307,7 @@ export async function createApplication(input: {
         entityType: "Application",
         entityId: created.id,
         payload: redactDeep({
+          userId: input.userId,
           jobId: input.jobId,
           portal: input.portal,
           mode: input.mode ?? "COPILOT",
@@ -840,10 +844,15 @@ export interface SubmissionCounts {
  * second process cannot reset the budget (gate 7.3).
  */
 export async function submissionCounts(input: {
+  userId: string;
   since: Date;
 }): Promise<SubmissionCounts> {
   const rows = await prisma.application.findMany({
-    where: { status: "SUBMITTED", submittedAt: { gte: input.since } },
+    where: {
+      userId: input.userId,
+      status: "SUBMITTED",
+      submittedAt: { gte: input.since },
+    },
     select: { portal: true, submittedAt: true },
   });
 
@@ -871,16 +880,33 @@ export async function submissionCounts(input: {
  * this; a portal earned last month must stay earned, and an Auto-Pilot submission
  * must never count as the user's own approval.
  */
-export async function approvedCoPilotByPortal(): Promise<Record<string, number>> {
+export async function approvedCoPilotByPortal(
+  userId: string,
+): Promise<Record<string, number>> {
   const rows = await prisma.application.groupBy({
     by: ["portal"],
-    where: { mode: "COPILOT", status: "SUBMITTED" },
+    where: { userId, mode: "COPILOT", status: "SUBMITTED" },
     _count: { _all: true },
   });
 
   const counts: Record<string, number> = {};
   for (const row of rows) counts[row.portal] = row._count._all;
   return counts;
+}
+
+/**
+ * One application, only if it belongs to the caller. Every route and service that
+ * takes an application id from outside goes through this, so another account's id
+ * is indistinguishable from one that does not exist.
+ */
+export async function findApplicationForUser(input: {
+  id: string;
+  userId: string;
+}): Promise<{ id: string; status: string } | null> {
+  return prisma.application.findFirst({
+    where: { id: input.id, userId: input.userId },
+    select: { id: true, status: true },
+  });
 }
 
 /** Bytes of a stored document, scoped to its owner, for attaching to a form. */

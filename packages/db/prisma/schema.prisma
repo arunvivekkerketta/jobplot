@@ -17,6 +17,7 @@ model User {
   answers       AnswerBankEntry[]
   documents     Document[]
   autopilotRuns AutopilotRun[]
+  applications  Application[]
 }
 
 model Profile {
@@ -109,7 +110,11 @@ model ResumeVersion {
 
 model Application {
   id              String             @id @default(cuid())
-  jobId           String             @unique
+  /// The account that queued it: every read and write on this table is scoped to
+  /// this owner, so one tenant can never approve or report on another's row.
+  userId          String
+  user            User               @relation(fields: [userId], references: [id])
+  jobId           String
   job             Job                @relation(fields: [jobId], references: [id])
   resumeVersionId String?
   resumeVersion   ResumeVersion?     @relation(fields: [resumeVersionId], references: [id])
@@ -125,6 +130,10 @@ model Application {
   claimedAt       DateTime?
   notes           String?
   events          ApplicationEvent[]
+
+  /// One application per posting per account; two accounts may apply to the same job.
+  @@unique([userId, jobId])
+  @@index([userId, status])
 }
 
 model ApplicationEvent {

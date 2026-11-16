@@ -2307,3 +2307,57 @@ the e2e database, started by `playwright.config.ts`, and its readiness is the wo
 - `AutopilotRun.result` stores the whole `RunAutopilotResult`, which already appears in the
   `autopilot.run` audit row; the duplication is deliberate (the row is the page's data source, the
   audit is the record).
+
+## Phase 20 — the review's open scoping finding: an application has an owner
+
+The review found `POST /api/applications/[id]/result` and `…/approve` reading a row by bare id,
+so a signed-in account could report a result on, or approve and send, another account's
+application. The fix is the missing relation rather than a route check: `Application.userId`
+now exists, is `NOT NULL`, and every read and write on the table is scoped by it.
+
+| Finding | Fix | Proof | Status |
+| --- | --- | --- | --- |
+| `result` accepted any application id | owner-scoped `findApplicationForUser`; another account's id is `404`, exactly like a missing one | `db: answers another account's id the same way as one that does not exist` | [MET] |
+| `approve` accepted any application id | `runApprovedApplication` reads `findFirst { id, userId }` before anything else, so consent can only send the caller's own row | same helper; phase7 e2e still green | [MET] |
+| `GET /api/applications` listed every tenant's rows | filtered by `userId` | e2e dashboard phases; typecheck | [MET] |
+| The daily cap and the approval trust ladder counted every tenant's submissions | `submissionCounts` and `approvedCoPilotByPortal` take a `userId` and filter on it | e2e `DAILY_CAP` / trust assertions still pass | [MET] |
+| `Application.jobId` was globally unique, so one account's row answered another's create | `@@unique([userId, jobId])`; `createApplication` looks up its own owner | `db: lets two accounts apply to the same posting without sharing a row` | [MET] |
+
+### The migration, and what it did to real data
+
+`20261117120000_application_owner` adds the column nullable, backfills, then enforces:
+
+1. a row queued from a tailored resume belongs to that `ResumeVersion`'s `Profile.userId`;
+2. the rest belong to the oldest account — this stack has always run single-tenant with one
+   seeded administrator, so that is the honest owner for a row created before owners existed;
+3. if any row is still unowned (no account at all) the migration **raises** instead of guessing
+   or deleting history.
+
+Applied to the development database, which held 74 applications:
+
+```
+select count(*), count("userId"), count(distinct "userId") from "Application";
+74|74|1
+```
+
+### Evidence
+
+```
+prisma migrate deploy (dev + jobpilot_e2e) → All migrations have been successfully applied.
+pnpm lint      → exit 0
+pnpm typecheck → exit 0
+pnpm test      → 262 passed, 1 skipped (db 24 = the two new ownership cases)
+pnpm e2e       → 39 passed (4.5m)
+```
+
+### Deviations and limits
+
+- Backfill step 2 is a judgement call, and the migration says so: it attributes pre-owner rows to
+  the oldest account rather than inventing an owner per row. In a genuinely multi-tenant deployment
+  that would need a data decision, which is why the guard fails loudly rather than silently
+  guessing when there is no account at all.
+- `recordApplicationResult` still takes a bare application id; the ownership decision is made by
+  its callers through `findApplicationForUser`. That is one place (the route) plus the approval
+  service, not a constraint inside the write.
+- `ApplicationEvent`, `AuditLog` and the browser executor are unchanged: they are reached only
+  through an application id that the caller has already been proved to own.

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { prisma, recordApplicationResult } from "@jobpilot/db";
+import { findApplicationForUser, recordApplicationResult } from "@jobpilot/db";
 import { requireUserRequest } from "@/lib/guard";
 
 export const dynamic = "force-dynamic";
@@ -27,6 +27,8 @@ export async function POST(
   const guarded = await requireUserRequest(req);
   if (guarded instanceof Response) return guarded;
 
+  const { userId } = guarded;
+
   const { id } = await context.params;
 
   let body: unknown;
@@ -44,10 +46,8 @@ export async function POST(
     );
   }
 
-  const application = await prisma.application.findUnique({
-    where: { id },
-    select: { id: true, status: true },
-  });
+  // Owner-scoped: a result may only be reported for the caller's own application.
+  const application = await findApplicationForUser({ id, userId });
   if (!application) {
     return NextResponse.json({ error: "Unknown application" }, { status: 404 });
   }

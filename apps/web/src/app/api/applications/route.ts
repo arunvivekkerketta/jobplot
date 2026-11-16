@@ -27,6 +27,7 @@ const listQuery = z.object({
 export async function GET(req: Request) {
   const guarded = await requireUserRequest(req);
   if (guarded instanceof Response) return guarded;
+  const user = guarded;
 
   const parsedQuery = listQuery.safeParse({
     status: new URL(req.url).searchParams.get("status") ?? undefined,
@@ -39,7 +40,10 @@ export async function GET(req: Request) {
   }
 
   const applications = await prisma.application.findMany({
-    where: parsedQuery.data.status ? { status: parsedQuery.data.status } : {},
+    where: {
+      userId: user.userId,
+      ...(parsedQuery.data.status ? { status: parsedQuery.data.status } : {}),
+    },
     orderBy: { id: "desc" },
     take: 50,
     include: {
@@ -148,6 +152,7 @@ export async function POST(req: Request) {
   }
 
   const application = await createApplication({
+    userId,
     jobId: job.id,
     portal: job.source,
   });

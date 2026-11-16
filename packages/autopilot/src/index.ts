@@ -121,7 +121,10 @@ async function loadCandidates(
   });
 
   const applications = await prisma.application.findMany({
-    where: { jobId: { in: matches.map((match) => match.job.id) } },
+    where: {
+      userId,
+      jobId: { in: matches.map((match) => match.job.id) },
+    },
     select: { jobId: true, status: true },
   });
   // A paused application is retried (a missing Answer Bank entry is fixable);
@@ -166,7 +169,7 @@ async function loadCandidates(
 
 export async function loadAutopilotStatus(userId: string): Promise<AutopilotStatus> {
   const settings = await settingsFor(userId);
-  const counts = await submissionCounts({ since: startOfToday() });
+  const counts = await submissionCounts({ userId, since: startOfToday() });
   const candidates = await loadCandidates(userId);
 
   const selection = selectAutopilotQueue({
@@ -190,7 +193,7 @@ export async function loadAutopilotStatus(userId: string): Promise<AutopilotStat
     by: ["source"],
     _count: { _all: true },
   });
-  const trustCounts = await approvedCoPilotByPortal();
+  const trustCounts = await approvedCoPilotByPortal(userId);
 
   const portals: PortalStatus[] = sources
     .map((row) => row.source)
@@ -260,7 +263,7 @@ export async function updatePortal(
 
   if (unlocked) {
     // Read from stored applications, never from the request (4.2).
-    const trust = trustState((await approvedCoPilotByPortal())[portal] ?? 0);
+    const trust = trustState((await approvedCoPilotByPortal(userId))[portal] ?? 0);
     const decision = canUnlockPortal(
       { allowSubmit: settings.allowSubmit, killSwitch: settings.killSwitch },
       { approved: trust.approved },
@@ -307,7 +310,7 @@ export async function runAutopilotNow(
   const profile = await prisma.profile.findUnique({ where: { userId } });
   if (!profile) throw new Error("Import a profile before running Auto-Pilot.");
 
-  const counts = await submissionCounts({ since: startOfToday() });
+  const counts = await submissionCounts({ userId, since: startOfToday() });
   const candidates = await loadCandidates(userId, {
     ...(options.jobIds ? { jobIds: options.jobIds } : {}),
   });
@@ -354,6 +357,7 @@ export async function runAutopilotNow(
   const claimedIds: string[] = [];
   for (const candidate of eligible) {
     const application = await createApplication({
+      userId,
       jobId: candidate.jobId,
       portal: candidate.portal,
       mode: "AUTOPILOT",
@@ -473,7 +477,7 @@ export async function runAutopilotNow(
         // when the batch started (I4).
         preflightFor: async (target) => {
           const fresh = await settingsFor(userId);
-          const today = await submissionCounts({ since: startOfToday() });
+          const today = await submissionCounts({ userId, since: startOfToday() });
           const last = today.lastByPortal[target.portal];
           return {
             settings: {
@@ -595,8 +599,8 @@ export async function runApprovedApplication(
   userId: string,
   applicationId: string,
 ): Promise<ApproveOutcome> {
-  const application = await prisma.application.findUnique({
-    where: { id: applicationId },
+  const application = await prisma.application.findFirst({
+    where: { id: applicationId, userId },
     select: { id: true, status: true, mode: true, jobId: true },
   });
   if (!application) return { ok: false, status: 404, error: "Unknown application" };
@@ -624,7 +628,7 @@ export async function runApprovedApplication(
     return { ok: false, status: 409, error: "allowSubmit is off, so nothing can be sent." };
   }
 
-  const today = await submissionCounts({ since: startOfToday() });
+  const today = await submissionCounts({ userId, since: startOfToday() });
   if (today.total >= settings.dailyCap) {
     return {
       ok: false,
