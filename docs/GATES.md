@@ -1745,3 +1745,33 @@ error, the two autocomplete tokens, and the not-found page.
 The navigation moved into `apps/web/src/app/NavLinks.tsx` so the active state can
 use `usePathname`; the header keeps a client-free layout and the skip link stays a
 plain anchor to `#main`.
+
+## Phase 16 — Stage 4, missing features (part 1: 4.1, 4.3, 4.5)
+
+| Task | What it asks | What exists now | Evidence | Status |
+| --- | --- | --- | --- | --- |
+| 4.1 | An Applications page after the phase 4 flow | `/applications` with per-status counters, a labelled status filter (`?status=`, plain GET form), one row per application and an expandable action log; `GET /api/applications?status=` rejects an unknown status with 422 and keeps `events` as a count so earlier specs stay valid | phase4 e2e asserts a row with `data-status="SUBMITTED"` and a non-zero Submitted counter | [MET] |
+| 4.3 | Skill-gap report plus project ideas | `extractGap` counts each keyword once per posting and asks the Fact Index whether the profile can prove it; `suggestProjects` returns 4–6 step ideas from a fixed table with a generic fallback. `POST /api/gaps` saves a `GapReport`; `/skills` renders have/missing/ideas | `packages/core/test/gap.test.ts` (5 cases) + `/skills` e2e | [MET] |
+| 4.5 | Tell the user when a human is needed | `formatHumanNeeded` in core; `notifyHumanNeeded` posts codes-only text to an https webhook only, 5 s timeout, every attempt audited as `autopilot.notify`; wired into the Auto-Pilot outcome handler for every non-SUBMITTED outcome | `packages/autopilot/test/notify.test.ts` (4 cases: delivered, http refused, not configured, network failure) | [MET] |
+| 4.2 | Earned Auto-Pilot trust ladder | not started | — | [PENDING] |
+| 4.4 | Cover letter, cold email, offer letters | not started | — | [PENDING] |
+| 4.6 | Background "Run" via a queue | not started, needs a decision (see below) | — | [PENDING] |
+
+### Evidence
+
+```
+pnpm lint      → exit 0
+pnpm typecheck → exit 0
+pnpm test      → core 43, sources 34, render 22, apply 63, autopilot 10, db 22, llm 38 = 232 passed
+pnpm e2e       → 36 passed (3.6m)
+```
+
+### Deviations
+
+- 4.3's planned fixture expectation ("Terraform missing") does not hold: `fixtures/sample-resume.json` already lists Terraform, Kubernetes and Docker. The tests use `Rust`/`Elixir` as the genuinely absent skills instead of editing the shared fixture, which other suites depend on.
+- 4.3's API maps the report into the existing `GapReport` shape (`{keyword, jobs, severity}`) rather than changing the `saveGapReport` contract; severity is derived from the share of scored postings mentioning the keyword.
+- 4.5 has no delivery retry: a failed webhook is audited and dropped, so the UI stays the source of truth.
+
+### Still to do in Stage 4
+
+4.2 (three Co-Pilot approvals per portal before Auto-Pilot), 4.4 (letters with a draft watermark and a claim re-check before sending) and 4.6 (moving Run off the request path). 4.6 needs the user's decision: a pg-boss worker cannot be exercised by the current e2e suite, which clicks Run and expects a submission in the same request, so it would need a real worker in the test run.

@@ -66,3 +66,17 @@ test("gate 3.8: an unknown address shows the not-found page", async ({ page }) =
   await expect(page.getByTestId("not-found-page")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Page not found" })).toBeVisible();
 });
+
+test("gate 4.3: the skills page renders what postings ask for", async ({ page }) => {
+  await login(page);
+  await page.goto("/skills");
+  await expect(page.getByTestId("skills-page")).toBeVisible();
+  // Either no scores exist yet, or the two lists are rendered; both are valid
+  // states and both must be reachable without an error page.
+  await expect(
+    page
+      .getByTestId("skills-have")
+      .or(page.getByTestId("skills-empty"))
+      .or(page.getByTestId("skills-needs-profile")),
+  ).toBeVisible();
+});

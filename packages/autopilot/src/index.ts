@@ -14,6 +14,7 @@ import {
   type SkippedCandidate,
 } from "@jobpilot/apply";
 import { startOfDayInZone, type JsonResumeProfile } from "@jobpilot/core";
+import { notifyHumanNeeded } from "./notify.js";
 import {
   claimApplication,
   createApplication,
@@ -479,6 +480,28 @@ export async function runAutopilotNow(
           ...(outcome.reason ? { reason: outcome.reason } : {}),
           ...(outcome.submissionText ? { submissionText: outcome.submissionText } : {}),
         });
+
+        // Anything a human must finish is announced, with codes only (I5/I7).
+        if (outcome.status !== "SUBMITTED") {
+          const candidate = claimed.find((entry) => entry.jobId === outcome.jobId);
+          await notifyHumanNeeded(
+            {
+              title: candidate?.title ?? "Application",
+              portal: candidate?.portal ?? "unknown",
+              reason: outcome.reason ?? outcome.status,
+            },
+            {
+              audit: async (payload) =>
+                writeAudit({
+                  actor: "SYSTEM",
+                  action: "autopilot.notify",
+                  entityType: "Settings",
+                  entityId: userId,
+                  payload,
+                }),
+            },
+          );
+        }
       },
     });
 

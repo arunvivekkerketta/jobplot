@@ -11,6 +11,8 @@ const LINKS = [
   { href: "/matches", label: "Matches" },
   { href: "/tailor", label: "Tailor" },
   { href: "/answers", label: "Answers" },
+  { href: "/skills", label: "Skills" },
+  { href: "/applications", label: "Applications" },
   { href: "/autopilot", label: "Auto-Pilot" },
   { href: "/audit", label: "Audit" },
   { href: "/settings", label: "Settings" },

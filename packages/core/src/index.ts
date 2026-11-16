@@ -12,3 +12,5 @@ export * from "./matching/types.js";
 export * from "./matching/score.js";
 export * from "./matching/embedding.js";
 export * from "./matching/explain.js";
+export * from "./notify.js";
+export * from "./gap/extract.js";

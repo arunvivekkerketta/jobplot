@@ -19,17 +19,40 @@ const createInput = z.object({
   resumeVersionId: z.string().min(1).optional(),
 });
 
-export async function GET() {
+const listQuery = z.object({
+  status: z
+    .enum(["QUEUED", "RUNNING", "PAUSED_NEEDS_HUMAN", "BLOCKED", "SUBMITTED", "ERROR"])
+    .optional(),
+});
+
+export async function GET(req: Request) {
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const parsedQuery = listQuery.safeParse({
+    status: new URL(req.url).searchParams.get("status") ?? undefined,
+  });
+  if (!parsedQuery.success) {
+    return NextResponse.json(
+      { error: "Unknown status filter", issues: parsedQuery.error.issues },
+      { status: 422 },
+    );
+  }
+
   const applications = await prisma.application.findMany({
+    where: parsedQuery.data.status ? { status: parsedQuery.data.status } : {},
     orderBy: { id: "desc" },
     take: 50,
     include: {
       job: { select: { id: true, title: true, company: true, url: true } },
+      // The dashboard lists what the browser actually did, in order.
+      events: {
+        orderBy: { at: "desc" },
+        take: 20,
+        select: { type: true, payload: true, at: true },
+      },
       _count: { select: { events: true } },
     },
   });
@@ -40,9 +63,18 @@ export async function GET() {
         id: application.id,
         status: application.status,
         portal: application.portal,
+        mode: application.mode,
         submittedAt: application.submittedAt?.toISOString() ?? null,
         notes: application.notes,
         events: application._count.events,
+        actions: application.events.map((event) => ({
+          type: event.type,
+          at: event.at.toISOString(),
+          detail:
+            typeof (event.payload as { detail?: unknown }).detail === "string"
+              ? (event.payload as { detail: string }).detail
+              : null,
+        })),
         job: application.job,
       })),
     },

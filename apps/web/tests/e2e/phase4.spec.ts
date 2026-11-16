@@ -188,6 +188,14 @@ test("gate 4.7/4.9: the runner fills the form, attaches the resume and the run i
   await expect(page.getByTestId("audit-table")).toContainText("browser.submit");
   await expect(page.getByTestId("audit-table")).toContainText("application.result");
 
+  // Gate 4.1: the dashboard shows the submission this flow just recorded.
+  await page.goto("/applications");
+  await expect(page.getByTestId("applications-page")).toBeVisible();
+  await expect(
+    page.locator('[data-testid="application-row"][data-status="SUBMITTED"]').first(),
+  ).toBeVisible();
+  await expect(page.getByTestId("count-submitted")).not.toHaveText("0");
+
   await mockPage.close();
 });
 
