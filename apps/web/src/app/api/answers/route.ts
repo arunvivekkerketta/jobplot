@@ -2,7 +2,12 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/auth";
 import { looksSensitive } from "@jobpilot/apply";
-import { deleteAnswer, listAnswers, upsertAnswer } from "@jobpilot/db";
+import {
+  isLetterAnswerKey,
+  recheckLetterClaims,
+  type JsonResumeProfile,
+} from "@jobpilot/core";
+import { deleteAnswer, listAnswers, prisma, upsertAnswer } from "@jobpilot/db";
 import { requireUserRequest } from "@/lib/guard";
 
 export const dynamic = "force-dynamic";
@@ -49,6 +54,35 @@ export async function POST(req: Request) {
       { error: "Validation failed", issues: parsed.error.issues },
       { status: 422 },
     );
+  }
+
+  // 4.4: a letter becomes text the runner types into an employer's form the
+  // moment it lands in the Answer Bank, so the claims are checked here, right
+  // before anything can be sent (I1).
+  if (isLetterAnswerKey(parsed.data.key)) {
+    const profile = await prisma.profile.findUnique({
+      where: { userId },
+      select: { jsonResume: true },
+    });
+    if (!profile) {
+      return NextResponse.json(
+        { error: "Import a profile before saving a letter." },
+        { status: 409 },
+      );
+    }
+    const check = recheckLetterClaims(
+      profile.jsonResume as unknown as JsonResumeProfile,
+      { paragraphs: [parsed.data.answer], claims: [] },
+    );
+    if (!check.ok) {
+      return NextResponse.json(
+        {
+          error: "This letter states facts your profile cannot support (I1).",
+          issues: check.issues,
+        },
+        { status: 422 },
+      );
+    }
   }
 
   const entry = await upsertAnswer({

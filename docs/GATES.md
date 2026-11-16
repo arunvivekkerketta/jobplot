@@ -1826,3 +1826,46 @@ remaining: 0, unlocked: true` in `GET /api/autopilot`.
 
 4.4 (cover letter, cold email and offer letters with the MOCK_OFFER watermark) and 4.6
 (moving Run onto a background queue, which needs the user's decision on how it is verified).
+
+## Phase 18 — Stage 4, task 4.4: letters that are always marked and always provable
+
+| Gate | Sub-task | Observable outcome | Expected proof | Status |
+| --- | --- | --- | --- | --- |
+| 4.4a | Three letter kinds with a fixed watermark | `letterWatermark` returns `DRAFT` for a cover letter and a cold email, and `SAMPLE` for an offer reply; `formatLetter` writes the mark at the top **and** the bottom on every call; `renderLetter` repeats it in the HTML (fixed overlay + header + footer) | `packages/core/test/letters.test.ts`, `packages/render/test/letter.test.ts` | [MET] |
+| 4.4b | Drafting from indexed facts only | `buildLetterPrompt` presents the profile as a closed ALLOWED FACTS list, wraps the posting and the user's notes as untrusted data (I2), and requires a `claims` array; `draftLetterWithClient` rejects any draft the profile cannot support (I1) | `packages/llm/test/letters.test.ts` (accepted draft, invented employer, invented number) | [MET] |
+| 4.4c | Claim re-check before anything is sent | Saving a letter key (`cover_letter` / `cold_email` / `offer_reply`) into the Answer Bank — the text the runner types into an employer's form — re-checks the claims and returns 422 with the offending values on failure | `apps/web/tests/e2e/phase10-letters.spec.ts` | [MET] |
+| 4.4d | The Letters workspace | `POST /api/letters` drafts one letter for one posting and returns the marked text and HTML, or 422 with the rejected claims, or 503 without an API key; `/letters` selects a kind and a posting and can save the draft to the Answer Bank | typecheck + phase10 e2e (page states); route requires `ANTHROPIC_API_KEY` | [MET] |
+| 4.4e | Nothing existing regressed | The Answer Bank gate only fires for letter keys; the two specs that used a timestamp inside a cover letter now use a fact-only sentence | phase7+phase8: `7 passed (2.7m)` | [MET] |
+
+### Evidence
+
+```
+pnpm lint      → exit 0
+pnpm typecheck → exit 0
+pnpm test      → core 50, render 25, llm 42, sources 34, apply 65, autopilot 10, db 22 = 248 passed
+pnpm e2e       → 37 passed (4.4m)
+phase10 alone  → 1 passed (36.7s)
+phase7+phase8  → 7 passed (2.7m)
+```
+
+Walkthrough of 4.4b/4.4c: the model returns `{subject, paragraphs, claims}`; `recheckLetterClaims`
+checks every claim's numbers against every number in the profile and every distinctive word of
+the claim against the profile text, then checks every number in the body the same way. A draft
+claiming "Led 250 engineers at NimbusPay" fails on `250`; a body sentence "I led a team of 30
+engineers" fails even with an empty `claims` array. The Answer Bank route runs the same function
+on the stored text, so a hand-edited letter is caught at the moment it becomes form input.
+
+### Deviations
+
+- There is no email or messaging integration, so "sent" is defined as the moment a letter enters
+  the Answer Bank (the only path by which letter text reaches an employer's form). No mail is
+  dispatched by this task and no third-party dependency was added.
+- `POST /api/letters` needs `ANTHROPIC_API_KEY` (503 with a clear message otherwise). The drafting
+  route is therefore not exercised end to end in this environment; the prompt, the schema, the
+  claim rejection and the rendering are covered by unit tests with `FakeLLMClient`, and the
+  Answer-Bank gate is covered end to end.
+- The e2e specs for phase7 and phase8 previously put a timestamp inside their cover-letter
+  answer; that is exactly the invented-number case the gate now rejects, so the fixtures use a
+  fact-only sentence instead of weakening the check.
+- The phase 4 / applications panel cleanup (the duplicated action log) rides along in this
+  commit.

@@ -113,7 +113,12 @@ test("gate 8.1-8.4: the scheduled tick submits for opted-in users only", async (
   expect(recompute.status()).toBe(200);
   await approvedVersion(page, jobId);
   await page.request.post("/api/answers", {
-    data: { key: "cover_letter", answer: `Scheduled run ${stamp}` },
+    // No digits: the letter claim check refuses numbers the profile cannot
+    // support (I1), and this answer is typed into the posting form.
+    data: {
+      key: "cover_letter",
+      answer: "I build reliable payment systems with Python and PostgreSQL.",
+    },
   });
 
   const base = await page.request.put("/api/settings", {

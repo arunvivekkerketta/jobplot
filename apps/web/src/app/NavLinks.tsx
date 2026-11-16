@@ -12,6 +12,7 @@ const LINKS = [
   { href: "/tailor", label: "Tailor" },
   { href: "/answers", label: "Answers" },
   { href: "/skills", label: "Skills" },
+  { href: "/letters", label: "Letters" },
   { href: "/applications", label: "Applications" },
   { href: "/autopilot", label: "Auto-Pilot" },
   { href: "/audit", label: "Audit" },

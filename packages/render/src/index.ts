@@ -18,6 +18,8 @@ export { renderResumeHtml, escapeHtml } from "./html.js";
 export { renderResumePdf } from "./pdf.js";
 export { renderResumeDocx } from "./docx.js";
 export { tailorDocument, tailoredText } from "./tailor.js";
+export { renderLetter } from "./letter.js";
+export type { LetterRender } from "./letter.js";
 export type { KeywordReport, TailorOptions, TailorResult } from "./tailor.js";
 
 export type ResumeFormat = "html" | "pdf" | "docx";

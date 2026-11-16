@@ -125,7 +125,11 @@ test("gate 7.1-7.5: Auto-Pilot submits unattended behind portals, caps and audit
   // The Greenhouse fixture asks for a cover letter, which only the Answer Bank
   // may supply; without it a Co-Pilot approval pauses for a human (I5).
   const coverLetter = await page.request.post("/api/answers", {
-    data: { key: "cover_letter", answer: `I build reliable payment systems. ${stamp}` },
+    // No digits: a letter may not state a number the profile cannot support (I1).
+    data: {
+      key: "cover_letter",
+      answer: "I build reliable payment systems with Python, PostgreSQL and Kubernetes.",
+    },
   });
   expect(coverLetter.status()).toBe(201);
 

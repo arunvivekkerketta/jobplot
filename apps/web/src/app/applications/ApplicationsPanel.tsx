@@ -123,6 +123,21 @@ export default function ApplicationsPanel({
                       )}
                     </p>
                   )}
+                  {application.actions.length > 0 && (
+                    <details className="mt-1 text-xs" data-testid="application-actions">
+                      <summary className="cursor-pointer">
+                        {application.actions.length} action(s)
+                      </summary>
+                      <ul className="mt-1 space-y-1 text-neutral-700">
+                        {application.actions.map((action, index) => (
+                          <li key={`${application.id}-${index}`}>
+                            <strong>{action.type}</strong> {action.at}
+                            {action.detail ? ` — ${action.detail}` : ""}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
                 </td>
                 <td className="py-3 pr-4">
                   <span className={badgeClass(application.status)}>
@@ -155,30 +170,6 @@ export default function ApplicationsPanel({
             ))}
           </tbody>
         </table>
-      )}
-
-      {applications.some((application) => application.actions.length > 0) && (
-        <div className="space-y-2" data-testid="application-actions">
-          <h2 className="font-semibold">Actions</h2>
-          {applications
-            .filter((application) => application.actions.length > 0)
-            .map((application) => (
-              <details key={application.id} className="border-t border-neutral-200 pt-2 text-sm">
-                <summary className="cursor-pointer">
-                  {application.job.company} · {application.job.title} ·{" "}
-                  {application.actions.length} action(s)
-                </summary>
-                <ul className="mt-2 space-y-1 text-xs text-neutral-700">
-                  {application.actions.map((action, index) => (
-                    <li key={`${application.id}-${index}`}>
-                      <strong>{action.type}</strong> {action.at}
-                      {action.detail ? ` — ${action.detail}` : ""}
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            ))}
-        </div>
       )}
     </div>
   );
