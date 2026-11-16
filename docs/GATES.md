@@ -1913,3 +1913,53 @@ four secrets set) on a machine that has it before trusting the stack in producti
 
 The script re-runs in under a second and needs only Node, so it is safe to keep in CI next to the
 other repository checks.
+
+## Gate 2.4 — Auto-Pilot temporary directory, failure path (closes the Stage 2 gap)
+
+Stage 2 recorded 2.4 as implemented but its failure-path test missing. It is written now:
+`packages/autopilot/test/tempdir.test.ts`.
+
+| Gate | Sub-task | Observable outcome | Expected proof | Status |
+| --- | --- | --- | --- | --- |
+| 2.4a | The run directory is private | `fs.mkdtempSync` under the OS temp dir, `chmod 0o700`, and each resume written `0o600` | code in `runAutopilotNow`; the new test observes the real directory through a spy on `mkdtempSync` | [MET] |
+| 2.4b | The directory is deleted when the browser runtime is missing | `import("playwright")` is mocked to reject the way a missing runtime does; the run rejects with `BrowserUnavailableError`; the directory that existed at the moment of the throw no longer exists afterwards | test asserts `existedAtThrow === true` **and** `fs.existsSync(dir) === false`, plus the parent listing | [MET] |
+| 2.4c | The failed run is retryable and audited | The claim taken before the browser is released, and an `autopilot.unavailable` audit row is written | same test asserts `released === ["app-1"]` and the audit action | [MET] |
+
+### Evidence
+
+```
+$ pnpm --filter @jobpilot/autopilot exec vitest run test/tempdir.test.ts --reporter=verbose
+ ✓ test/tempdir.test.ts > gate 2.4: a failed run leaves no temporary directory behind > removes the resume directory when the Playwright import throws 17ms
+      Tests  1 passed (1)
+
+$ pnpm --filter @jobpilot/autopilot test
+ ✓ test/notify.test.ts (4 tests)
+ ✓ test/tempdir.test.ts (1 test)
+ ✓ test/scheduled.test.ts (6 tests)
+      Tests  11 passed (11)
+
+$ pnpm test
+@jobpilot/render:test:       Tests  25 passed (25)
+@jobpilot/core:test:         Tests  50 passed (50)
+@jobpilot/sources:test:      Tests  34 passed (34)
+@jobpilot/apply:test:        Tests  65 passed (65)
+@jobpilot/autopilot:test:    Tests  11 passed (11)
+@jobpilot/llm:test:          Tests  42 passed (42)
+@jobpilot/db:test:           Tests  22 passed (22)
+```
+
+`pnpm lint` → exit 0; `pnpm --filter @jobpilot/autopilot typecheck` → exit 0.
+
+How the proof works: the Playwright factory is hoisted by `vi.mock` and, when the run's
+`await import("playwright")` reaches it, records whether the run's directory already contains
+the decrypted resume — then throws. So the test cannot pass vacuously: if the directory had never
+been created, `existedAtThrow` would be `false` and the first assertion would fail. The assertion
+afterwards is a real filesystem check on the path `mkdtempSync` actually returned, not on a
+reconstructed guess.
+
+### Deviations
+
+- The test mocks `@jobpilot/db` wholesale, so it proves the cleanup and release logic, not the
+  database behaviour around it (that is covered by the db suite and by the e2e runs).
+- The success path's cleanup was already exercised end to end by phase7/phase8 runs; this test
+  adds only the missing failure path.
