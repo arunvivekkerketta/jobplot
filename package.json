@@ -20,6 +20,7 @@
     "dev": "turbo run dev",
     "build": "turbo run build",
     "lint": "eslint .",
+    "check:compose": "node scripts/check-compose-secrets.mjs --self-test",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "e2e": "pnpm --filter @jobpilot/web e2e",

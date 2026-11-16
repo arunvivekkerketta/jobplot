@@ -65,6 +65,11 @@ jobs:
           pnpm db:migrate
           pnpm db:seed
 
+      # Gate 1.7b without Docker: the compose file must refuse to start without
+      # the four secrets, and the checker must be able to fail (--self-test).
+      - name: Compose secret audit
+        run: pnpm check:compose
+
       - name: Lint
         run: pnpm lint
 

@@ -1882,6 +1882,25 @@ makes Compose refuse to start, proven directly against the file, with the residu
 | What is proven | How | Evidence |
 | --- | --- | --- |
 | Every required secret uses the required form `${VAR:?message}`: `APP_ENCRYPTION_KEY` ×1, `NEXTAUTH_SECRET` ×2, `POSTGRES_PASSWORD` ×2, `ADMIN_PASSWORD` ×1 | `scripts/check-compose-secrets.mjs` parses every `${…}` reference and fails on a bare form or a `:-` default | all six references reported `all required-form` |
+
+The audit is no longer a script nobody runs: `pnpm check:compose` runs it with `--self-test`, and the
+CI `checks` job (`.github/workflows/ci.yml`) runs that script before lint. Wiring checked by mutation,
+not by reading the YAML:
+
+```
+$ cp docker-compose.yml /tmp/compose.bak
+$ # one required interpolation changed to ${POSTGRES_PASSWORD:-changeme}
+$ pnpm check:compose ; echo MUTATED_EXIT=$?
+  FAIL POSTGRES_PASSWORD: line 21 uses ":-", so the stack would start without it
+  MUTATED_EXIT=1
+$ cp /tmp/compose.bak docker-compose.yml   # git diff --stat: no change
+$ pnpm check:compose ; echo RESTORED_EXIT=$?
+  OK: the stack cannot start without the four secrets
+  RESTORED_EXIT=0
+```
+
+Still unchanged: this proves the file against Compose's documented interpolation rules; it is not
+`docker compose config`, which this machine still cannot run.
 | No required secret has a literal value in the file | same script: `^\s*NAME\s*:\s*(?!\$\{\|\*)` must not match | no failures |
 | An empty environment refuses, and names the variable | the script applies Compose's documented rules (`:?` fails when unset/empty, `:-` falls back, bare becomes empty) to the whole file | `empty environment refused, naming POSTGRES_PASSWORD` |
 | Each secret on its own also refuses, under its own name | expansion with all four set except one, four times | four `refused by name when unset` lines |
