@@ -93,6 +93,7 @@ describe("the coverage report's two audited inputs are owner-scoped", () => {
     const theirs = await makeApplication(other);
 
     await recordApplicationResult({
+      userId: owner,
       applicationId: mine,
       status: "PAUSED_NEEDS_HUMAN",
       actions: [],
@@ -103,6 +104,7 @@ describe("the coverage report's two audited inputs are owner-scoped", () => {
       ],
     });
     await recordApplicationResult({
+      userId: other,
       applicationId: theirs,
       status: "PAUSED_NEEDS_HUMAN",
       actions: [],
@@ -123,6 +125,7 @@ describe("the coverage report's two audited inputs are owner-scoped", () => {
     const applicationId = await makeApplication(owner);
 
     await recordApplicationResult({
+      userId: owner,
       applicationId,
       status: "PAUSED_NEEDS_HUMAN",
       actions: [],

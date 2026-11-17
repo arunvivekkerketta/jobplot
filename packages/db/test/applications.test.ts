@@ -6,6 +6,7 @@ import {
   findApplicationForUser,
   listAnswers,
   prisma,
+  recordApplicationResult,
   releaseApplication,
   releaseStaleApplicationClaims,
   upsertAnswer,
@@ -229,6 +230,65 @@ describe("an application belongs to the account that queued it", () => {
 
       expect(await findApplicationForUser({ id: applicationId, userId: other.id })).toBeNull();
       expect(await findApplicationForUser({ id: "cuid_that_does_not_exist", userId: owner })).toBeNull();
+    } finally {
+      await prisma.user.deleteMany({ where: { id: other.id } });
+    }
+  });
+
+  it("refuses a result write that names another account's application", async () => {
+    const owner = await ensureUser();
+    const other = await prisma.user.create({
+      data: { email: `${stamp}-writer@jobpilot.test`, passwordHash: "not-a-real-hash" },
+      select: { id: true },
+    });
+
+    try {
+      const applicationId = await makeApplication();
+      const before = await prisma.application.findUniqueOrThrow({
+        where: { id: applicationId },
+        select: { status: true, _count: { select: { events: true } } },
+      });
+      // Queuing the row already wrote its own audit trail; the refused write adds none.
+      const auditsBefore = await prisma.auditLog.count({ where: { entityId: applicationId } });
+
+      // The owner filter is part of the UPDATE, so the caller does not have to read
+      // the row first for the write to be safe.
+      const refused = await recordApplicationResult({
+        userId: other.id,
+        applicationId,
+        status: "SUBMITTED",
+        actions: [{ kind: "SUBMIT", detail: "not this account's row" }],
+      });
+      expect(refused).toBeNull();
+
+      const after = await prisma.application.findUniqueOrThrow({
+        where: { id: applicationId },
+        select: { status: true, _count: { select: { events: true } } },
+      });
+      expect(after.status).toBe(before.status);
+      expect(after._count.events).toBe(before._count.events);
+      // A write that did not happen leaves no audit trail behind it (I8).
+      expect(await prisma.auditLog.count({ where: { entityId: applicationId } })).toBe(auditsBefore);
+
+      // A missing id is the same answer: the caller cannot tell them apart.
+      expect(
+        await recordApplicationResult({
+          userId: other.id,
+          applicationId: "cuid_that_does_not_exist",
+          status: "SUBMITTED",
+          actions: [],
+        }),
+      ).toBeNull();
+
+      // And the owner's own write still lands.
+      const own = await recordApplicationResult({
+        userId: owner,
+        applicationId,
+        status: "SUBMITTED",
+        actions: [{ kind: "SUBMIT", detail: "by the owner" }],
+      });
+      expect(own?.status).toBe("SUBMITTED");
+      expect(own?.events).toBeGreaterThan(after._count.events);
     } finally {
       await prisma.user.deleteMany({ where: { id: other.id } });
     }

@@ -71,6 +71,7 @@ export async function POST(
   }
 
   const saved = await recordApplicationResult({
+    userId,
     applicationId: application.id,
     status: parsed.data.status,
     actions: parsed.data.actions,
@@ -79,6 +80,11 @@ export async function POST(
       ? { submissionText: parsed.data.submissionText }
       : {}),
   });
+
+  // The write is owner-scoped too, so this is the same 404 the read already gives.
+  if (!saved) {
+    return NextResponse.json({ error: "Unknown application" }, { status: 404 });
+  }
 
   return NextResponse.json(saved, { headers: { "Cache-Control": "no-store" } });
 }

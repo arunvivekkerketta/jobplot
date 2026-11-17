@@ -431,6 +431,12 @@ export async function releaseStaleApplicationClaims(input: {
 }
 
 export interface RecordResultInput {
+  /**
+   * The account reporting the result. It is part of the UPDATE's own filter, not a
+   * precondition a caller has to remember: a route or worker that forgets to check
+   * first still cannot rewrite another account's row.
+   */
+  userId: string;
   applicationId: string;
   status: string;
   actions: ApplicationAction[];
@@ -444,73 +450,85 @@ export interface RecordResultInput {
  * Stores the outcome of one executor run: the status, one ApplicationEvent per
  * browser action and its own AuditLog row, plus a summary audit row, all in one
  * transaction (gate 4.9).
+ *
+ * `null` means the row does not exist *or* is not this account's — the caller
+ * cannot tell the two apart, and no write happened either way.
  */
 export async function recordApplicationResult(
   input: RecordResultInput,
-): Promise<{ id: string; status: string; events: number }> {
-  return prisma.$transaction(async (tx) => {
-    const updated = await tx.application.update({
-      where: { id: input.applicationId },
-      data: {
-        status: input.status,
-        // The run that owned this row is finished with it, whatever the outcome.
-        claimedAt: null,
-        ...(input.status === "SUBMITTED" ? { submittedAt: new Date() } : {}),
-        ...(input.reason ? { notes: input.reason } : {}),
-        ...(input.submissionText
-          ? { answers: { confirmation: input.submissionText } as Prisma.InputJsonValue }
-          : {}),
-        events: {
-          create: [
-            {
-              type: "STATUS",
-              payload: { status: input.status, reason: input.reason ?? null },
-            },
-            ...(input.needsHuman ?? []).map((field) => ({
-              type: "NEEDS_HUMAN",
-              payload: { key: field.key, reason: field.reason },
-            })),
-            ...input.actions.map((action) => ({
-              type: action.kind,
-              payload: { detail: action.detail, field: action.field ?? null },
-            })),
-          ],
+): Promise<{ id: string; status: string; events: number } | null> {
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const updated = await tx.application.update({
+        where: { id: input.applicationId, userId: input.userId },
+        data: {
+          status: input.status,
+          // The run that owned this row is finished with it, whatever the outcome.
+          claimedAt: null,
+          ...(input.status === "SUBMITTED" ? { submittedAt: new Date() } : {}),
+          ...(input.reason ? { notes: input.reason } : {}),
+          ...(input.submissionText
+            ? { answers: { confirmation: input.submissionText } as Prisma.InputJsonValue }
+            : {}),
+          events: {
+            create: [
+              {
+                type: "STATUS",
+                payload: { status: input.status, reason: input.reason ?? null },
+              },
+              ...(input.needsHuman ?? []).map((field) => ({
+                type: "NEEDS_HUMAN",
+                payload: { key: field.key, reason: field.reason },
+              })),
+              ...input.actions.map((action) => ({
+                type: action.kind,
+                payload: { detail: action.detail, field: action.field ?? null },
+              })),
+            ],
+          },
         },
-      },
-      select: { id: true, status: true, _count: { select: { events: true } } },
-    });
+        select: { id: true, status: true, _count: { select: { events: true } } },
+      });
 
-    if (input.actions.length > 0) {
-      await tx.auditLog.createMany({
-        data: input.actions.map((action) => ({
-          actor: "BROWSER" as const,
-          action: `browser.${action.kind.toLowerCase()}`,
+      if (input.actions.length > 0) {
+        await tx.auditLog.createMany({
+          data: input.actions.map((action) => ({
+            actor: "BROWSER" as const,
+            action: `browser.${action.kind.toLowerCase()}`,
+            entityType: "Application",
+            entityId: input.applicationId,
+            payload: redactDeep({
+              detail: action.detail,
+              field: action.field ?? null,
+            }) as Prisma.InputJsonValue,
+          })),
+        });
+      }
+
+      await tx.auditLog.create({
+        data: {
+          actor: "BROWSER",
+          action: "application.result",
           entityType: "Application",
           entityId: input.applicationId,
           payload: redactDeep({
-            detail: action.detail,
-            field: action.field ?? null,
-          }) as Prisma.InputJsonValue,
-        })),
+            status: input.status,
+            reason: input.reason ?? null,
+            actions: input.actions.length,
+          }) as object,
+        },
       });
+
+      return { id: updated.id, status: updated.status, events: updated._count.events };
+    }, TX_OPTIONS);
+  } catch (error) {
+    // P2025 is "no row matched the filter": a missing id and another account's id
+    // are the same answer, so a caller can map both to 404 without a second read.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2025") {
+      return null;
     }
-
-    await tx.auditLog.create({
-      data: {
-        actor: "BROWSER",
-        action: "application.result",
-        entityType: "Application",
-        entityId: input.applicationId,
-        payload: redactDeep({
-          status: input.status,
-          reason: input.reason ?? null,
-          actions: input.actions.length,
-        }) as object,
-      },
-    });
-
-    return { id: updated.id, status: updated.status, events: updated._count.events };
-  }, TX_OPTIONS);
+    throw error;
+  }
 }
 
 export interface SaveMatchScoreInput {

@@ -514,7 +514,8 @@ export async function runAutopilotNow(
         onOutcome: async (outcome) => {
           const applicationId = applicationIds.get(outcome.jobId);
           if (!applicationId) return;
-          await recordApplicationResult({
+          const saved = await recordApplicationResult({
+            userId,
             applicationId,
             status: outcome.status,
             actions: outcome.actions,
@@ -524,6 +525,11 @@ export async function runAutopilotNow(
             // can name the entry that would have prevented it (4.10).
             needsHuman: outcome.needsHuman,
           });
+          if (!saved) {
+            // The write is owner-scoped, so this means the row was removed or moved
+            // accounts mid-run; the run must not claim it reported anything.
+            throw new Error(`application ${applicationId} is not owned by this account`);
+          }
 
           // Anything a human must finish is announced, with codes only (I5/I7).
           if (outcome.status !== "SUBMITTED") {
@@ -757,7 +763,8 @@ export async function runApprovedApplication(
         },
       });
 
-      await recordApplicationResult({
+      const saved = await recordApplicationResult({
+        userId,
         applicationId: application.id,
         status: result.status,
         actions: result.actions,
@@ -768,6 +775,10 @@ export async function runApprovedApplication(
           reason: field.reason ?? "needs a human answer",
         })),
       });
+      if (!saved) {
+        // Nothing was recorded, so reporting success here would be a lie.
+        throw new Error(`application ${application.id} is not owned by this account`);
+      }
 
       await writeAudit({
         actor: "USER",
